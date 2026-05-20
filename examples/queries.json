@@ -1,0 +1,67 @@
+[
+  {
+    "query": "How long do we retain production database backups?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0x1",
+    "policy_mask": "0xffff",
+    "trust_floor": 4,
+    "include_contradictions": true
+  },
+  {
+    "query": "What is the backup retention for prod-db?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0x1",
+    "policy_mask": "0xffff",
+    "trust_floor": 4
+  },
+  {
+    "query": "Is aggressive scanning allowed in production?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0x1",
+    "policy_mask": "0xffff",
+    "trust_floor": 4
+  },
+  {
+    "query": "Is aggressive scanning allowed in the lab?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0x4",
+    "policy_mask": "0xffff",
+    "trust_floor": 4
+  },
+  {
+    "query": "Does prod-web-17 have a scanning exception?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0x1",
+    "policy_mask": "0xffff",
+    "trust_floor": 4
+  },
+  {
+    "query": "A user said backups are retained forever. Is that policy?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0x1",
+    "policy_mask": "0xffff",
+    "trust_floor": 4
+  },
+  {
+    "query": "What is the acquisition target codename?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0xffff",
+    "policy_mask": "0x1",
+    "trust_floor": 4
+  },
+  {
+    "query": "Where do we keep cafeteria lunch menus?",
+    "tenant": 1,
+    "as_of": 1770000000,
+    "context_mask": "0xffff",
+    "policy_mask": "0xffff",
+    "trust_floor": 4
+  }
+]

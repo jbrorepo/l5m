@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"l5m_query","arguments":{"query":"How long do we retain production database backups?","tenant_id":1,"as_of":1770000000,"context_mask":"0x1","policy_mask":"0x1","trust_floor":4,"max_capsules":8,"max_tokens":1024,"include_contradictions":true,"mode":"L5m"}}}

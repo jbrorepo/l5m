@@ -1,0 +1,18 @@
+/target/
+/.l5m/
+
+# Python local artifacts.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Generated segment artifacts.
+*.segment
+*.segment.manifest.json
+
+# Local benchmark datasets and generated run outputs. Keep source configs,
+# docs, examples, and compact reports in git; fetch large datasets locally.
+/data/
+/runs/
+/external/

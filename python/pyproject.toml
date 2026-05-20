@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "l5m-client"
+version = "0.1.0"
+description = "Stdlib-only Python client for the local L5M stdio server"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+dependencies = []
+
+[tool.setuptools]
+packages = ["l5m_client"]

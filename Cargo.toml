@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/l5m-core",
+    "crates/l5m-cli",
+    "crates/l5m-bench",
+    "crates/l5m-benchmarks",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jbrorepo/l5m"
+
+[workspace.dependencies]
+blake3 = "1.5"
+clap = { version = "4.5", features = ["derive"] }
+memmap2 = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.10"

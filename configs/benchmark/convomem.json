@@ -1,0 +1,23 @@
+{
+  "name": "convomem",
+  "label": "frozen",
+  "frozen": true,
+  "benchmark": "ConvoMem",
+  "mode": "hybrid-parent",
+  "top_k": 10,
+  "raw_retrieval_only": true,
+  "fusion": {
+    "bm25_weight": 1.0,
+    "l5m_rank_weight": 0.05,
+    "parent_density_bonus": 0.005
+  },
+  "categories": [
+    "user evidence",
+    "assistant facts evidence",
+    "changing evidence",
+    "abstention evidence",
+    "preference evidence",
+    "implicit connection evidence"
+  ],
+  "notes": "Frozen ConvoMem configuration covering all six categories, including abstention scoring."
+}
