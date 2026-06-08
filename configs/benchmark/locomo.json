@@ -1,0 +1,17 @@
+{
+  "name": "locomo",
+  "label": "frozen",
+  "frozen": true,
+  "benchmark": "LoCoMo",
+  "mode": "hybrid-parent",
+  "top_k": 10,
+  "raw_retrieval_only": true,
+  "retrieval_granularity": "session",
+  "top_k_policy": "top_k_must_not_exceed_candidate_pool",
+  "fusion": {
+    "bm25_weight": 1.0,
+    "l5m_rank_weight": 0.05,
+    "parent_density_bonus": 0.005
+  },
+  "notes": "Frozen LoCoMo session retrieval configuration; top-k is clamped or rejected when the candidate pool is smaller."
+}

@@ -1,0 +1,16 @@
+{
+  "name": "longmemeval",
+  "label": "frozen",
+  "frozen": true,
+  "benchmark": "LongMemEval",
+  "mode": "hybrid-parent",
+  "top_k": 10,
+  "raw_retrieval_only": true,
+  "retrieval_granularity": "session",
+  "fusion": {
+    "bm25_weight": 1.0,
+    "l5m_rank_weight": 0.05,
+    "parent_density_bonus": 0.005
+  },
+  "notes": "Frozen MemPalace-style LongMemEval configuration for held-out raw retrieval runs."
+}

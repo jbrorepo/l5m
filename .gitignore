@@ -1,0 +1,15 @@
+/target/
+*.segment
+*.segment.manifest.json
+
+# Large datasets / corpora (fetched, not source)
+/data/
+/ConvoMem/
+/external/
+
+# Generated benchmark run files (large; reproducible via OPTIMIZATION_REPORT.md)
+/runs/
+
+# Editor / tooling directories
+/.vscode/
+/.kiro/

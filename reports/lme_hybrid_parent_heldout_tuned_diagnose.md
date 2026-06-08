@@ -1,0 +1,66 @@
+# L5M Retrieval Diagnosis
+
+| Bucket | Count |
+| --- | ---: |
+| hit | 396 |
+| multi-session-partial | 46 |
+| zero-recall | 8 |
+
+## Misses
+
+| Query | Category | Bucket | Missed IDs | Hit Ranks | Returned |
+| --- | --- | --- | --- | --- | --- |
+| 6d550036 | multi-session | multi-session-partial | answer_ec904b3c_2, answer_ec904b3c_3 | 3, 5 | 2e4430d8_2, 0bab76de, answer_ec904b3c_1, f6246b5f, answer_ec904b3c_4, ultrachat_184799, sharegpt_zciCXP1_12, sharegpt_nVi6tIt_0, a9981dc6_3, dae3906e_2 |
+| gpt4_59c863d7 | multi-session | multi-session-partial | answer_593bdffd_2, answer_593bdffd_3 | 2, 3 | a7d014e4_1, answer_593bdffd_1, answer_593bdffd_4, sharegpt_MNdE67E_17, eb47739f_2, e60a93ff_2, 9ef698bc_2, b70358bc_1, c263f1c0, sharegpt_AhS7uI8_351 |
+| gpt4_f2262a51 | multi-session | zero-recall | answer_55a6940c_1, answer_55a6940c_2, answer_55a6940c_3 |  | c0d6fa6f_2, ultrachat_268434, sharegpt_BWMyoNr_0, f2ffaf25, sharegpt_eoEbthf_0, c34b6a1c_2, sharegpt_hChsWOp_128, sharegpt_1Vdj119_61, 2aeb1268, 94de539a_1 |
+| gpt4_2f8be40d | multi-session | multi-session-partial | answer_e7b0637e_2 | 2, 8 | sharegpt_L64rHOA_0, answer_e7b0637e_1, ultrachat_217382, acda6a4e_4, 81b971b8_2, cb1f962f_4, f0e71553_4, answer_e7b0637e_3, 1d6e01e8, fb2368b8_1 |
+| gpt4_15e38248 | multi-session | multi-session-partial | answer_8858d9dc_1, answer_8858d9dc_3 | 1, 3 | answer_8858d9dc_2, sharegpt_mm9tc5g_0, answer_8858d9dc_4, d4ab49f1, sharegpt_01VDd0u_0, ec616e7e_5, 87e55e85_2, ultrachat_515012, sharegpt_5Lp66E9_0, 530742d1 |
+| gpt4_5501fe77 | multi-session | multi-session-partial | answer_203bf3fa_2 | 1, 2 | answer_203bf3fa_3, answer_203bf3fa_1, bc5827b5, ultrachat_163385, sharegpt_x7apNZ0_0, 021c0d09_2, 631e4016, ultrachat_46240, 7a2c618c_1, 13b79e39_3 |
+| 2ce6a0f2 | multi-session | multi-session-partial | answer_901a6763_3 | 2, 8, 9 | ultrachat_36844, answer_901a6763_4, a1714d2c_2, c1634164_2, ultrachat_355740, sharegpt_JFnk7nk_0, 600077b0_3, answer_901a6763_2, answer_901a6763_1, e1137e38 |
+| 129d1232 | multi-session | multi-session-partial | answer_1de862d6_3 | 1, 4 | answer_1de862d6_2, 69a9211c_2, sharegpt_De0lanR_0, answer_1de862d6_1, sharegpt_jBwwg7B_0, bf3aebdb_1, sharegpt_dVOH7pn_0, 5e4bb245_2, ultrachat_199215, sharegpt_V2j1zkI_0 |
+| gpt4_194be4b3 | multi-session | multi-session-partial | answer_3826dc55_1, answer_3826dc55_2 | 1, 2, 8 | answer_3826dc55_4, answer_3826dc55_5, ultrachat_58180, ultrachat_474217, ultrachat_385467, sharegpt_8VxdQuI_0, 31403c51, answer_3826dc55_3, 407031a9_2, sharegpt_Y6MteNX_0 |
+| a9f6b44c | multi-session | multi-session-partial | answer_cc021f81_2 | 1, 2 | answer_cc021f81_3, answer_cc021f81_1, 837f258b, ec830058_1, ultrachat_279504, b7e36cc5_2, sharegpt_AqgYTct_0, ec8d10c7_2, aa3406a3_1, 4e1059f9 |
+| gpt4_ab202e7f | multi-session | multi-session-partial | answer_728deb4d_1, answer_728deb4d_3, answer_728deb4d_5 | 4, 10 | sharegpt_xD2q9ER_14, ultrachat_433876, sharegpt_q3qJzui_0, answer_728deb4d_4, sharegpt_nc62Spr_7, 2d6f97aa_2, ultrachat_281729, sharegpt_gmg7OiC_0, 9af4e346_2, answer_728deb4d_2 |
+| gpt4_731e37d7 | multi-session | multi-session-partial | answer_826d51da_2 | 1, 5, 9 | answer_826d51da_1, 07820595_1, sharegpt_Rwql31f_62, sharegpt_vonEwUo_17, answer_826d51da_3, c5b6d7b1, ultrachat_502568, 5365840b_2, answer_826d51da_4, 66081c0f_1 |
+| 10d9b85a | multi-session | multi-session-partial | answer_e0585cb5_1 | 2 | c51583cd_3, answer_e0585cb5_2, 84889496_1, 5cbfaf3e_4, d576152e_1, cbd1fe79_2, aa6afba8, 96f8be8b_1, faac3c60, 45823393_2 |
+| 2b8f3739 | multi-session | multi-session-partial | answer_23759615_2 | 4, 5 | sharegpt_ZH6IAa2_11, ec8691f5, c075835c, answer_23759615_1, answer_23759615_3, 67d6f18f_1, ce6cae1b_3, ultrachat_576167, 0e193841_7, dd25eeb5_6 |
+| 1a8a66a6 | multi-session | multi-session-partial | answer_2bd23659_4 | 1, 5, 7 | answer_2bd23659_3, ultrachat_456324, 02042eab_2, 1e91a236_1, answer_2bd23659_1, 54aa4875, answer_2bd23659_2, ultrachat_139366, ultrachat_412421, sharegpt_mDokt9G_7 |
+| gpt4_372c3eed | multi-session | multi-session-partial | answer_35c5419d_2 | 1, 3 | answer_35c5419d_3, 4d04b866, answer_35c5419d_1, ultrachat_290513, 10647770, sharegpt_jSnesqJ_15, 402240fb_1, sharegpt_2hMUduQ_1, sharegpt_KzDwaf1_247, sharegpt_6VqlSoL_25 |
+| 81507db6 | multi-session | multi-session-partial | answer_da3c1266_3 | 1, 2, 3, 4 | answer_da3c1266_2, answer_da3c1266_5, answer_da3c1266_1, answer_da3c1266_4, 5c2f41a0_1, 88c09142_2, 42fa05d3, sharegpt_xLtmCeT_0, ultrachat_162129, ultrachat_229430 |
+| 88432d0a_abs | multi-session | multi-session-partial | answer_733e443a_abs_3, answer_733e443a_abs_4 | 3, 8 | 92ad6d8f_2, 752b10e6_2, answer_733e443a_abs_1, 31ca5871_1, 491d4a75, 8e5b0424, 1e215f06, answer_733e443a_abs_2, sharegpt_Ht6euhs_96, sharegpt_fUrzIST_0 |
+| gpt4_372c3eed_abs | multi-session | multi-session-partial | answer_35c5419d_abs_2 | 1, 3 | answer_35c5419d_abs_1, 85dec0b4_1, answer_35c5419d_abs_3, 31e254b5, e6cc6157_4, b0a9de7f_1, 39948bcf_1, 084cba20, 6a720945_1, sharegpt_J410gdS_30 |
+| 75832dbd | single-session-preference | zero-recall | answer_d87a6ef8 |  | sharegpt_xni9yYO_6, ultrachat_165893, 5f1f5891, 1ef63c66, ultrachat_569211, c7270a1b_1, sharegpt_FYqt26U_0, 5a6b1065, ultrachat_533748, sharegpt_fK7pfNf_0 |
+| 06f04340 | single-session-preference | zero-recall | answer_92d5f7cd |  | 91223fd5_1, 6e6fbb6b, 0844dea6, sharegpt_MkLNumZ_0, 8b156015_2, sharegpt_h4ZC1fl_203, 42924d15, 7153284a_2, 728deb4d_4, 3ceb6783_3 |
+| d6233ab6 | single-session-preference | zero-recall | answer_b0fac439 |  | 94bc18df_3, e419b7c3_4, ultrachat_457634, 87cfeb28_2, d850eba6_2, ecfd2047_1, ultrachat_499691, ultrachat_125013, 0e726047, ultrachat_237324 |
+| 3c1045c8 | multi-session | multi-session-partial | answer_c8cc60d6_1 | 1 | answer_c8cc60d6_2, b52f03a1_1, ultrachat_561782, ultrachat_20893, ultrachat_484591, ultrachat_299649, 62541047, sharegpt_NTHvrGV_0, sharegpt_fnuLBKl_83, ultrachat_169304 |
+| a1cc6108 | multi-session | multi-session-partial | answer_17dc2f5b_1 | 2 | 298a07de_5, answer_17dc2f5b_2, fce56dfb_4, 7285299a_4, fb328ace_1, 6dfc99bf_1, 001cefa7_2, sharegpt_b76JUGd_65, eaebb274_2, ultrachat_211607 |
+| 3fdac837 | multi-session | multi-session-partial | answer_419d21d5_1 | 1 | answer_419d21d5_2, 92b06116_1, ac8a2cd0, 09d021e7_1, daa1fe97_1, ea0a5580_1, ultrachat_526748, 30c92c0c_1, a98ff421_7, sharegpt_0kMM1sV_0 |
+| ba358f49 | multi-session | multi-session-partial | answer_cbd08e3c_2 | 1 | answer_cbd08e3c_1, 762d288d_1, 385683f0_2, 9cc709cb, ultrachat_465468, fb117eb0_2, 4f838497_2, 9a584663_2, 648d9cda, ultrachat_317048 |
+| 157a136e | multi-session | multi-session-partial | answer_8de18468_1 | 6 | ultrachat_255132, ultrachat_3770, a2e2cb72_5, 298bf7a3_1, ultrachat_58612, answer_8de18468_2, ultrachat_174427, ultrachat_264419, ultrachat_446084, ultrachat_440262 |
+| c18a7dc8 | multi-session | multi-session-partial | answer_2e2085fa_2 | 6 | 5022812c, 9d5a389d, ultrachat_473615, fc6c3985, ultrachat_353377, answer_2e2085fa_1, 805528d6_1, ultrachat_84280, d7f9742a_1, sharegpt_4pvUbr6_15 |
+| ba358f49_abs | multi-session | multi-session-partial | answer_cbd08e3c_abs_2 | 1 | answer_cbd08e3c_abs_1, sharegpt_18LCW88_0, 07ebc271, 30e58d0c_2, 9844f740, 33706ad0, 1162611c, 49a14a21_1, sharegpt_HRpe8C8_0, 30bbae12_1 |
+| b46e15ed | temporal-reasoning | multi-session-partial | answer_4bfcc250_4 | 1, 3, 6 | answer_4bfcc250_2, aeab3296, answer_4bfcc250_1, sharegpt_cXkL3cR_28, f598d30f_1, answer_4bfcc250_3, 4bf66c38_2, sharegpt_KCGdZJP_0, 940629b2_2, ultrachat_520419 |
+| 0bc8ad92 | temporal-reasoning | multi-session-partial | answer_f4ea84fb_2 | 1, 4 | answer_f4ea84fb_3, 0868982f_1, fccc9400, answer_f4ea84fb_1, d3cc5bdc_1, sharegpt_scMKXPh_9, sharegpt_Le7CqkS_0, sharegpt_vClQxDr_21, cc36cd3e, ultrachat_349938 |
+| gpt4_7f6b06db | temporal-reasoning | multi-session-partial | answer_5d8c99d3_1, answer_5d8c99d3_3 | 3 | 4bf66c38_2, 39c1bf6a, answer_5d8c99d3_2, ultrachat_31232, d9ca4aca, 928890e4_3, da42526b_1, sharegpt_3sKfamn_27, ultrachat_338301, sharegpt_gPFzM9v_153 |
+| gpt4_7abb270c | temporal-reasoning | multi-session-partial | answer_7093d898_2, answer_7093d898_3, answer_7093d898_4, answer_7093d898_5 | 2, 3 | 5808284e, answer_7093d898_1, answer_7093d898_6, ultrachat_544684, 05793e59_1, sharegpt_W6t3Ck0_0, bfae8d20, ultrachat_560932, 39948bcf_4, 85056d5f_1 |
+| gpt4_45189cb4 | temporal-reasoning | multi-session-partial | answer_e6c20e52_1 | 1, 8 | answer_e6c20e52_3, 5c16fe0b_1, c9d35c00_2, dc3ee1d1_1, sharegpt_hgGAUvu_0, ultrachat_307270, sharegpt_AnH3ftB_0, answer_e6c20e52_2, sharegpt_3bWPhNK_15, ebf5b3bc_2 |
+| gpt4_e061b84f | temporal-reasoning | zero-recall | answer_8c64ce25_1, answer_8c64ce25_2, answer_8c64ce25_3 |  | 0a6bf5e4_1, ultrachat_129606, 73bc3176_2, 11a8f823_1, ultrachat_436674, 539c2346_3, 9345f7dc_4, 3275acf9, bab3f409, 1446b088_2 |
+| gpt4_d6585ce8 | temporal-reasoning | multi-session-partial | answer_f999b05b_1 | 1, 4, 7, 9 | answer_f999b05b_3, 51c82c8e_2, ultrachat_225491, answer_f999b05b_5, dc0802a9_1, c1e598cd_3, answer_f999b05b_4, 4a79d078_4, answer_f999b05b_2, sharegpt_s8fhi1t_0 |
+| 2ebe6c92 | temporal-reasoning | multi-session-partial | answer_c9d35c00_1 | 4 | 2a500dce_3, sharegpt_9dKNTQo_0, 84048eba_5, answer_c9d35c00_2, 54c5a89c_1, ca3a4e4f_1, b30a47be_2, ultrachat_575902, fb303dd2_2, acbb04c7 |
+| gpt4_e061b84g | temporal-reasoning | multi-session-partial | answer_8c64ce26_1, answer_8c64ce26_2 | 9 | ae15e8b6_1, 9dac9e37_1, ce584ba0, 68705467_1, 3d6a2b24_1, ultrachat_246504, 0e3d8491_1, ultrachat_231231, answer_8c64ce26_3, sharegpt_783Lb5V_0 |
+| gpt4_1e4a8aec | temporal-reasoning | zero-recall | answer_16bd5ea6_1, answer_16bd5ea6_2 |  | 9f1f3bf4, a8086137, sharegpt_9JZCfee_0, 49576fd6, b34a52aa_3, 4c8455cb_2, sharegpt_sRhcMiu_0, b1265fd7_1, 1c662b7b_1, 1c177942_1 |
+| gpt4_59149c78 | temporal-reasoning | multi-session-partial | answer_d00ba6d1_1 | 7 | 84762061_1, sharegpt_GI6737T_2, 23754665, a8ac3d1d_1, ultrachat_511575, 765ce8a7_2, answer_d00ba6d1_2, ultrachat_463998, sharegpt_YENXhFv_0, sharegpt_271xCSW_27 |
+| gpt4_4929293b | temporal-reasoning | zero-recall | answer_add9b013_1, answer_add9b013_2 |  | sharegpt_KFhIUCO_0, sharegpt_rqvR1Ep_0, ultrachat_511609, ultrachat_326769, 88e01130_2, b4ed7223_3, e7aa3f51_3, bda611f6_3, cceffff7, cc8252e8 |
+| 9a707b82 | temporal-reasoning | multi-session-partial | answer_dba89488_2 | 2 | 8e78fa70_1, answer_dba89488_1, sharegpt_bUaSM2v_0, 778bedd4, 7a4d00b3_2, f8e9d4fa, 09e97c6f_2, 7966888b_2, f62c04c6, 990f3ef9_2 |
+| 6e984302 | temporal-reasoning | multi-session-partial | answer_88841f27_2 | 8 | 7285299a_8, 96c743d0_2, 3535dbf0_4, 6efebca9, c9dc9158_1, c03fc56c_1, sharegpt_4Wjx3pH_0, answer_88841f27_1, de1f4aec_1, 7cd7c296_1 |
+| gpt4_8279ba03 | temporal-reasoning | zero-recall | answer_56521e66_1 |  | b357fb8b_2, 2ef55f49_3, 50d66391_4, 518d26d3_4, 570fe405, 864a563d_5, bb107057_2, d1a1b9ea_1, ba9f938b_1, ultrachat_526748 |
+| gpt4_68e94288 | temporal-reasoning | multi-session-partial | answer_9793daa4_2 | 1 | answer_9793daa4_1, 128f4e4d_2, 4c49e37f, c99dcd81, 813ebecd_1, d8454317_7, ultrachat_396489, 6551be60_1, cff08ec1_1, 4d4df0e0_2 |
+| gpt4_2655b836 | temporal-reasoning | multi-session-partial | answer_4be1b6b4_1 | 1, 4 | answer_4be1b6b4_2, d8a1af6b_4, 9e05d9a0, answer_4be1b6b4_3, ultrachat_268202, ultrachat_247781, sharegpt_KzDwaf1_237, sharegpt_Tv9eXvf_0, 92509977_1, sharegpt_tRpp6Rt_0 |
+| a3838d2b | temporal-reasoning | multi-session-partial | answer_4ffa04a2_3 | 1, 2, 3, 5, 6 | answer_4ffa04a2_6, answer_4ffa04a2_1, answer_4ffa04a2_2, 8cf0d2a9, answer_4ffa04a2_5, answer_4ffa04a2_4, 4c358f1b_2, 638e7094_1, sharegpt_GDFyxeT_0, 10305ca9_2 |
+| gpt4_93f6379c | temporal-reasoning | multi-session-partial | answer_544fe66c_1 | 1, 2 | answer_544fe66c_2, answer_544fe66c_3, b8a688f6, aee99715, ultrachat_429804, 1b9b2960_3, d3a34811, ultrachat_443550, cfe90a9b_3, ultrachat_105190 |
+| 6613b389 | temporal-reasoning | multi-session-partial | answer_aaf71ce2_1 | 1, 2 | answer_aaf71ce2_3, answer_aaf71ce2_2, e3d8da67, f1cc1ddb_1, 55bc2e1e, e87aa998_1, 5eef2132, 20d6c376_1, 1a65880d, b4bfb953 |
+| gpt4_93159ced_abs | temporal-reasoning | multi-session-partial | answer_e5131a1b_abs_2 | 3 | 156988fe, sharegpt_pfa0Sfh_17, answer_e5131a1b_abs_1, ultrachat_195762, sharegpt_gYShON7_0, 76385c25, d850eba6_1, 0d8bac48, 8a1eb315_3, 7c9732ff_2 |
+| 982b5123_abs | temporal-reasoning | multi-session-partial | answer_ab603dd5_abs_2 | 3 | sharegpt_syHzISp_0, 4f3b0353_2, answer_ab603dd5_abs_1, sharegpt_WYQSZ3n_0, b1793bba, ultrachat_359846, ultrachat_280342, 147381f2_3, b8fa1517, bd00a24d_1 |
+| c8090214_abs | temporal-reasoning | multi-session-partial | answer_70dc7d08_abs_2 | 3 | f10be626, 64c71782, answer_70dc7d08_abs_1, b192ae00_1, cad5dca8_2, ultrachat_378830, ca3aa07f_1, ultrachat_155329, ultrachat_374236, d4f02577_2 |
+| 830ce83f | knowledge-update | multi-session-partial | answer_0b1a0942_2 | 4 | 47c5482a, dfbda5e9, d1e7d11c_2, answer_0b1a0942_1, 8d77be9a_2, sharegpt_hLkmbBL_0, ultrachat_288747, sharegpt_mMTudFY_0, sharegpt_DJ1HtcY_0, 8bc305e4_2 |
+| 0977f2af | knowledge-update | multi-session-partial | answer_3bf5b73b_1 | 1 | answer_3bf5b73b_2, f115a3db_1, b1d9eb66_4, b24eddd9_1, 809cbce9_3, 1692563c_1, ultrachat_554962, e7989082_2, 9b083158_1, sharegpt_n3MgsgL_0 |

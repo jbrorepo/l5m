@@ -1,0 +1,24 @@
+# L5M Scorecard: mempalace-longmemeval
+
+## Raw Retrieval
+
+| Queries | Recall@1 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 | MRR | Zero Recall |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 50 | 0.4747 | 0.7747 | 0.8510 | 0.7579 | 0.7892 | 0.8075 | 0.1000 |
+
+## Hot Retrieval Latency
+
+| P50 ns | P95 ns | P99 ns | P99.9 ns | Avg Candidates | Avg Scored | Avg Returned | Avg Tokens |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 27091800 | 42224600 | 45890000 | 45890000 | 46.40 | 46.40 | 10.00 | 19368.36 |
+
+## Build And Size
+
+| Build/Load ns | Segment Bytes |
+| ---: | ---: |
+| 17745351200 | 47993066 |
+
+## Gate Violations
+
+- violating rows: 0
+- raw retrieval only: true
