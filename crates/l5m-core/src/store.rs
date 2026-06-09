@@ -91,13 +91,26 @@ pub struct SegmentMetadata {
     pub capsule_count: usize,
 }
 
+/// Default size at which the active write buffer seals into an immutable run.
+/// Bounding the buffer is what makes a write amortized O(1): each write rebuilds
+/// only the (bounded) active segment, never the whole delta.
+pub const DEFAULT_DELTA_SEAL_THRESHOLD: usize = 1024;
+
 pub struct MemoryStore {
     segments: Vec<LoadedSegment>,
-    /// Live, in-RAM writable buffer of newly ingested/updated capsules.
+    /// Active, in-RAM write buffer of the most recent ingests/updates. Bounded by
+    /// `seal_threshold`; only this (small) buffer is re-indexed per write.
     delta: Vec<MemoryCapsule>,
-    /// In-memory segment built from `delta` so writes share the exact gate/
-    /// index/retrieval path as compiled base segments. Rebuilt on mutation.
+    /// In-memory segment built from the active `delta` buffer so live writes share
+    /// the exact gate/index/retrieval path as compiled base segments. Rebuilt on
+    /// mutation — but the buffer is bounded, so the rebuild is O(seal_threshold).
     delta_segment: Option<Segment>,
+    /// Immutable, already-indexed delta runs sealed from the active buffer once it
+    /// filled (LSM-style). Queried alongside the base + active buffer; never
+    /// rebuilt — folded away by compaction.
+    sealed_deltas: Vec<Segment>,
+    /// Seal the active buffer into a `sealed_deltas` run once it reaches this size.
+    seal_threshold: usize,
     /// Capsule ids hidden from results (deletes / supersessions).
     tombstones: HashSet<u128>,
     next_epoch: u64,
@@ -136,6 +149,8 @@ impl MemoryStore {
             segments,
             delta: Vec::new(),
             delta_segment: None,
+            sealed_deltas: Vec::new(),
+            seal_threshold: DEFAULT_DELTA_SEAL_THRESHOLD,
             tombstones: HashSet::new(),
             next_epoch,
             metrics: crate::metrics::Metrics::new(),
@@ -150,11 +165,21 @@ impl MemoryStore {
             segments: Vec::new(),
             delta: Vec::new(),
             delta_segment: None,
+            sealed_deltas: Vec::new(),
+            seal_threshold: DEFAULT_DELTA_SEAL_THRESHOLD,
             tombstones: HashSet::new(),
             next_epoch: 1,
             metrics: crate::metrics::Metrics::new(),
             wal: None,
         }
+    }
+
+    /// Override the active-buffer seal threshold (mainly for tests/tuning). A
+    /// smaller threshold seals more often (more runs, cheaper individual writes);
+    /// a larger one seals rarely (fewer runs, larger per-seal cost).
+    pub fn with_seal_threshold(mut self, threshold: usize) -> Self {
+        self.seal_threshold = threshold.max(1);
+        self
     }
 
     /// Open a **durable** store: load base segments, replay the write-ahead log
@@ -219,7 +244,9 @@ impl MemoryStore {
         for _ in 0..deletes {
             store.metrics.record_delete();
         }
-        store.rebuild_delta()?;
+        // Recovered state lands in the active buffer as a single run; the next
+        // live write seals it if it is over threshold.
+        store.rebuild_active_segment()?;
         store.wal = Some(crate::wal::Wal::open(&wal_path)?);
         Ok(store)
     }
@@ -245,12 +272,9 @@ impl MemoryStore {
             capsule: crate::compiler::capsule_to_json(&capsule),
         };
         self.wal_append(&op)?;
-        let id = capsule.capsule_id;
-        self.tombstones.remove(&id);
-        self.delta.retain(|existing| existing.capsule_id != id);
-        self.delta.push(capsule);
+        self.push_into_buffer(capsule);
         self.metrics.record_insert();
-        self.rebuild_delta()
+        self.seal_or_reindex()
     }
 
     /// Ingest from the same JSON shape `compile_segment` accepts.
@@ -258,8 +282,8 @@ impl MemoryStore {
         self.insert(crate::compiler::capsule_from_json(value)?)
     }
 
-    /// Batch ingest, rebuilding the delta index once. Prefer this for bulk
-    /// writes — `insert` rebuilds the delta index per call.
+    /// Batch ingest, re-indexing the active buffer once at the end (sealing
+    /// full runs along the way). Prefer this for bulk writes.
     pub fn insert_many<I>(&mut self, capsules: I) -> Result<()>
     where
         I: IntoIterator<Item = MemoryCapsule>,
@@ -269,13 +293,13 @@ impl MemoryStore {
                 capsule: crate::compiler::capsule_to_json(&capsule),
             };
             self.wal_append(&op)?;
-            let id = capsule.capsule_id;
-            self.tombstones.remove(&id);
-            self.delta.retain(|existing| existing.capsule_id != id);
-            self.delta.push(capsule);
+            self.push_into_buffer(capsule);
             self.metrics.record_insert();
+            if self.delta.len() >= self.seal_threshold {
+                self.seal_active_buffer()?;
+            }
         }
-        self.rebuild_delta()
+        self.rebuild_active_segment()
     }
 
     /// Batch ingest from JSON, rebuilding the delta index once. Prefer this over
@@ -291,7 +315,9 @@ impl MemoryStore {
         self.insert_many(capsules)
     }
 
-    /// Hide a capsule id from all future results (delete / supersede).
+    /// Hide a capsule id from all future results (delete / supersede). The
+    /// tombstone masks the id across the base, every sealed run, and the active
+    /// buffer at query time; we also drop any copy living in the active buffer.
     pub fn delete(&mut self, capsule_id: u128) -> Result<()> {
         self.wal_append(&crate::wal::WalOp::Delete {
             id: capsule_id.to_string(),
@@ -300,50 +326,110 @@ impl MemoryStore {
             .retain(|existing| existing.capsule_id != capsule_id);
         self.tombstones.insert(capsule_id);
         self.metrics.record_delete();
-        self.rebuild_delta()
+        self.rebuild_active_segment()
     }
 
+    /// Number of capsules in the active (unsealed) write buffer.
     pub fn delta_len(&self) -> usize {
         self.delta.len()
     }
 
-    fn rebuild_delta(&mut self) -> Result<()> {
+    /// Number of sealed, immutable delta runs awaiting compaction.
+    pub fn sealed_run_count(&self) -> usize {
+        self.sealed_deltas.len()
+    }
+
+    /// Append into the active buffer, clearing any tombstone and superseding any
+    /// older copy of the same id that is still in the buffer.
+    fn push_into_buffer(&mut self, capsule: MemoryCapsule) {
+        let id = capsule.capsule_id;
+        self.tombstones.remove(&id);
+        self.delta.retain(|existing| existing.capsule_id != id);
+        self.delta.push(capsule);
+    }
+
+    /// After a single write: seal the buffer if it has filled, otherwise just
+    /// re-index the (bounded) active buffer.
+    fn seal_or_reindex(&mut self) -> Result<()> {
+        if self.delta.len() >= self.seal_threshold {
+            self.seal_active_buffer()
+        } else {
+            self.rebuild_active_segment()
+        }
+    }
+
+    /// Re-index the active buffer into its in-RAM segment. O(buffer) — and the
+    /// buffer is bounded by `seal_threshold`, so this is the per-write cost.
+    fn rebuild_active_segment(&mut self) -> Result<()> {
         self.delta_segment = if self.delta.is_empty() {
             None
         } else {
             Some(Segment::from_capsules(self.delta.clone(), self.next_epoch)?)
         };
-        self.next_epoch += 1;
         Ok(())
     }
 
-    /// Fold the delta and base segments into a single fresh in-memory base
-    /// segment (dropping tombstoned ids, delta winning on id collisions) and
-    /// clear the delta + tombstones. Keeps the delta small (LSM-style).
-    pub fn compact(&mut self) -> Result<()> {
+    /// Freeze the active buffer into an immutable sealed run and start a fresh
+    /// buffer. The run is indexed once and never rebuilt until compaction.
+    fn seal_active_buffer(&mut self) -> Result<()> {
+        if self.delta.is_empty() {
+            return Ok(());
+        }
+        let run = Segment::from_capsules(std::mem::take(&mut self.delta), self.next_epoch)?;
+        self.next_epoch += 1;
+        self.sealed_deltas.push(run);
+        self.delta_segment = None;
+        Ok(())
+    }
+
+    /// Collect every live capsule (newest version per id wins, tombstoned ids
+    /// dropped) across the active buffer, the sealed runs, and the base segments.
+    /// Recency order: active buffer → sealed runs newest-first → base.
+    fn collect_live_capsules(&self) -> Vec<MemoryCapsule> {
         let mut live: Vec<MemoryCapsule> = Vec::new();
         let mut seen: HashSet<u128> = HashSet::new();
-        for capsule in &self.delta {
+        let mut take = |capsule: &MemoryCapsule| {
             if !self.tombstones.contains(&capsule.capsule_id) && seen.insert(capsule.capsule_id) {
                 live.push(capsule.clone());
+            }
+        };
+        for capsule in &self.delta {
+            take(capsule);
+        }
+        for run in self.sealed_deltas.iter().rev() {
+            for capsule in run.capsules() {
+                take(capsule);
             }
         }
         for loaded in &self.segments {
             for capsule in loaded.segment.capsules() {
-                if !self.tombstones.contains(&capsule.capsule_id) && seen.insert(capsule.capsule_id)
-                {
-                    live.push(capsule.clone());
-                }
+                take(capsule);
             }
         }
+        live
+    }
+
+    /// Reset all delta state (active buffer, sealed runs, tombstones) after the
+    /// live set has been folded into a base segment.
+    fn clear_delta_state(&mut self) {
+        self.delta.clear();
+        self.sealed_deltas.clear();
+        self.delta_segment = None;
+        self.tombstones.clear();
+    }
+
+    /// Fold the delta (active buffer + sealed runs) and base segments into a
+    /// single fresh in-memory base segment (dropping tombstoned ids, newest
+    /// version winning on id collisions) and clear the delta. Keeps the delta
+    /// small (LSM-style).
+    pub fn compact(&mut self) -> Result<()> {
+        let live = self.collect_live_capsules();
         let compacted = Segment::from_capsules(live, self.next_epoch)?;
         self.segments = vec![LoadedSegment {
             path: None,
             segment: compacted,
         }];
-        self.delta.clear();
-        self.delta_segment = None;
-        self.tombstones.clear();
+        self.clear_delta_state();
         self.next_epoch += 1;
         Ok(())
     }
@@ -356,21 +442,7 @@ impl MemoryStore {
     /// `open_durable([checkpoint], wal_path)`.
     pub fn compact_to(&mut self, checkpoint: impl AsRef<Path>) -> Result<()> {
         let checkpoint = checkpoint.as_ref();
-        let mut live: Vec<MemoryCapsule> = Vec::new();
-        let mut seen: HashSet<u128> = HashSet::new();
-        for capsule in &self.delta {
-            if !self.tombstones.contains(&capsule.capsule_id) && seen.insert(capsule.capsule_id) {
-                live.push(capsule.clone());
-            }
-        }
-        for loaded in &self.segments {
-            for capsule in loaded.segment.capsules() {
-                if !self.tombstones.contains(&capsule.capsule_id) && seen.insert(capsule.capsule_id)
-                {
-                    live.push(capsule.clone());
-                }
-            }
-        }
+        let live = self.collect_live_capsules();
         // 1) Durably write the checkpoint segment.
         crate::compiler::compile_capsules(checkpoint, live, self.next_epoch)?;
         // 2) Adopt it as the sole base.
@@ -378,9 +450,7 @@ impl MemoryStore {
             path: Some(checkpoint.to_path_buf()),
             segment: Segment::open(checkpoint)?,
         }];
-        self.delta.clear();
-        self.delta_segment = None;
-        self.tombstones.clear();
+        self.clear_delta_state();
         self.next_epoch += 1;
         // 3) Only now is it safe to drop the WAL history.
         if let Some(wal) = self.wal.as_mut() {
@@ -389,10 +459,13 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// All queryable segments: immutable base segments plus the live delta.
+    /// All queryable segments: immutable base segments, the sealed delta runs,
+    /// then the active buffer. Gates and the tombstone/dedup pass apply uniformly
+    /// across all of them.
     fn live_segments(&self) -> Vec<&Segment> {
         let mut segments: Vec<&Segment> =
             self.segments.iter().map(|loaded| &loaded.segment).collect();
+        segments.extend(self.sealed_deltas.iter());
         if let Some(delta) = &self.delta_segment {
             segments.push(delta);
         }
@@ -530,9 +603,15 @@ fn merge_frames(mut frames: Vec<MemoryFrame>, probe: &MemoryProbe) -> MemoryFram
         conflicts: Vec::new(),
         coverage: CoverageReport::default(),
     };
+    // Newest-tier-wins de-duplication by capsule id. Frames arrive in
+    // `live_segments` order (base → sealed runs → active buffer = oldest →
+    // newest), so a later copy of the same id overwrites an earlier one in place.
+    // This makes an updated/reinserted capsule resolve to its freshest version
+    // regardless of which tier the stale copy lives in. First-seen position is
+    // preserved so the subsequent (stable) score sort is deterministic.
+    let mut slot_of: HashMap<u128, usize> = HashMap::new();
     for frame in frames.drain(..) {
         merged.epoch = merged.epoch.max(frame.epoch);
-        merged.capsules.extend(frame.capsules);
         merged.conflicts.extend(frame.conflicts);
         merged.coverage.exact_entity_match |= frame.coverage.exact_entity_match;
         merged.coverage.anchor_match_count += frame.coverage.anchor_match_count;
@@ -541,6 +620,15 @@ fn merge_frames(mut frames: Vec<MemoryFrame>, probe: &MemoryProbe) -> MemoryFram
         merged.coverage.context_valid_count += frame.coverage.context_valid_count;
         merged.coverage.candidate_count_before_scoring +=
             frame.coverage.candidate_count_before_scoring;
+        for capsule in frame.capsules {
+            match slot_of.get(&capsule.capsule_id) {
+                Some(&i) => merged.capsules[i] = capsule,
+                None => {
+                    slot_of.insert(capsule.capsule_id, merged.capsules.len());
+                    merged.capsules.push(capsule);
+                }
+            }
+        }
     }
     merged.capsules.sort_by(compare_frame_capsules);
     merged.capsules.truncate(probe.max_capsules);
