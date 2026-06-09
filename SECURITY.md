@@ -50,9 +50,21 @@ embedding model. See the threat model for details.
 ## Hardening & assurance in CI
 
 Every change runs: `cargo test` (incl. the gate-invariant property test and the
-segment-parser fuzzer), `cargo clippy -D warnings`, `cargo fmt --check`,
-`cargo deny` (advisories, licenses, supply-chain bans). Releases are intended to
-ship with signed artifacts and an SBOM.
+segment-parser fuzzer), the gate-before-scoring leak demo, the Python SDK tests,
+a bounded `cargo-fuzz` campaign, `cargo clippy -D warnings`, `cargo fmt --check`,
+and `cargo deny` (advisories, licenses, supply-chain bans).
+
+**Tagged releases** (`.github/workflows/release.yml`) publish cross-platform
+binaries plus a CycloneDX **and** SPDX SBOM, each with a SHA-256 checksum and a
+**keyless cosign (Sigstore) signature**. Verify any artifact with:
+
+```bash
+cosign verify-blob \
+  --certificate <file>.cert --signature <file>.sig \
+  --certificate-identity-regexp 'https://github.com/jbrorepo/l5m/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  <file>
+```
 
 ## Verifying the security claims yourself
 

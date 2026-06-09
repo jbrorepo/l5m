@@ -1,0 +1,149 @@
+name: Release
+
+# Tag-triggered supply-chain-hardened release:
+#   - cross-platform binaries for the CLI (`l5m`) and server (`l5m-server`)
+#   - SHA-256 checksums
+#   - an SBOM (CycloneDX + SPDX) for the whole repo
+#   - keyless cosign signatures (Sigstore) for every artifact, so anyone can
+#     verify provenance without a long-lived signing key.
+#
+# Verify a downloaded artifact:
+#   cosign verify-blob \
+#     --certificate <file>.cert --signature <file>.sig \
+#     --certificate-identity-regexp 'https://github.com/jbrorepo/l5m/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     <file>
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the GitHub release + upload assets
+  id-token: write # keyless cosign signing via GitHub OIDC
+
+jobs:
+  binaries:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: ""
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            ext: ""
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            ext: ""
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} -p l5m-cli -p l5m-server
+
+      - name: Package + checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist="l5m-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$dist"
+          bin_dir="target/${{ matrix.target }}/release"
+          cp "$bin_dir/l5m${{ matrix.ext }}" "$dist/"
+          cp "$bin_dir/l5m-server${{ matrix.ext }}" "$dist/"
+          cp README.md LICENSE-MIT LICENSE-APACHE SECURITY.md "$dist/" 2>/dev/null || true
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "${dist}.zip" "$dist" >/dev/null
+            asset="${dist}.zip"
+          else
+            tar czf "${dist}.tar.gz" "$dist"
+            asset="${dist}.tar.gz"
+          fi
+          # SHA-256 next to the archive (portable across runners).
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$asset" > "${asset}.sha256"
+          else
+            shasum -a 256 "$asset" > "${asset}.sha256"
+          fi
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the archive (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --output-signature "${ASSET}.sig" \
+            --output-certificate "${ASSET}.cert" \
+            "${ASSET}"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+            ${{ env.ASSET }}.sig
+            ${{ env.ASSET }}.cert
+
+  sbom:
+    name: SBOM (CycloneDX + SPDX) + signatures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: l5m-${{ github.ref_name }}.cyclonedx.json
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: l5m-${{ github.ref_name }}.spdx.json
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SBOMs (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in l5m-${{ github.ref_name }}.cyclonedx.json l5m-${{ github.ref_name }}.spdx.json; do
+            cosign sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.cert" \
+              "${f}"
+          done
+
+      - name: Upload SBOMs
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            l5m-${{ github.ref_name }}.cyclonedx.json
+            l5m-${{ github.ref_name }}.cyclonedx.json.sig
+            l5m-${{ github.ref_name }}.cyclonedx.json.cert
+            l5m-${{ github.ref_name }}.spdx.json
+            l5m-${{ github.ref_name }}.spdx.json.sig
+            l5m-${{ github.ref_name }}.spdx.json.cert
