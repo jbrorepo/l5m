@@ -314,12 +314,33 @@ fn ann_candidate_pool(
     let index = segment.index();
     let fingerprints = &index.fingerprints;
     let mut seen = BitSet::new(segment.capsule_count());
-    let mut pool: Vec<(usize, u32)> = Vec::new();
+    // Tiered pool so the cap keeps the most relevant candidates: tier 0 =
+    // gate-filtered dense-ANN hits (cosine-near, possibly lexically disjoint),
+    // tier 1 = exact lookup matches, tier 2 = fingerprint-LSH fill. Dense hits
+    // are ranked first so a dense-only match always survives the cap — this is
+    // how single-tenant dense recall is closed. All tiers only ever add
+    // authorized (gated) capsules.
+    let mut pool: Vec<(usize, u8, u32)> = Vec::new();
+    if !probe.embedding.is_empty() {
+        if let Some(embedding_lsh) = &index.embedding_lsh {
+            embedding_lsh.for_each_candidate(&probe.embedding, |ordinal| {
+                if candidates.get(ordinal) && !seen.get(ordinal) {
+                    seen.set(ordinal);
+                    pool.push((
+                        ordinal,
+                        0,
+                        hamming_distance(probe.semantic_bits, fingerprints[ordinal]),
+                    ));
+                }
+            });
+        }
+    }
     for ordinal in lookup.iter_ones() {
         if candidates.get(ordinal) && !seen.get(ordinal) {
             seen.set(ordinal);
             pool.push((
                 ordinal,
+                1,
                 hamming_distance(probe.semantic_bits, fingerprints[ordinal]),
             ));
         }
@@ -331,12 +352,17 @@ fn ann_candidate_pool(
                 seen.set(ordinal);
                 pool.push((
                     ordinal,
+                    2,
                     hamming_distance(probe.semantic_bits, fingerprints[ordinal]),
                 ));
             }
         });
-    pool.sort_by_key(|(ordinal, distance)| (!lookup.get(*ordinal), *distance, *ordinal));
+    pool.sort_by_key(|(ordinal, tier, distance)| (*tier, *distance, *ordinal));
     pool.truncate(config.max_scored_candidates);
+    let pool: Vec<(usize, u32)> = pool
+        .into_iter()
+        .map(|(ordinal, _, distance)| (ordinal, distance))
+        .collect();
     let mut ordinals: Vec<usize> = pool.into_iter().map(|(ordinal, _)| ordinal).collect();
     ordinals.sort_unstable();
     ordinals

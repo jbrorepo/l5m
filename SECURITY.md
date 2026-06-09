@@ -36,9 +36,16 @@ The full analysis is in [THREAT_MODEL.md](THREAT_MODEL.md). In brief:
   documented, fuzzed mmap.
 - **Provenance & tamper-evidence:** per-result source/content hashes.
 
+**Available enterprise controls:**
+- **Encryption at rest** (`encryption` feature) — AEAD-sealed segments with a
+  customer-supplied key (KMS-ready `KeyProvider`); plaintext never hits disk.
+- **Tamper-evident audit log** — hash-chained record of every disclosure
+  (principal context, query hash, what was returned + source hashes), with
+  `verify_audit_chain` to detect any forgery.
+
 **Out of scope (caller's responsibility):** authentication/principal resolution,
-encryption at rest/in transit, side-channel resistance, and the trustworthiness
-of the embedding model. See the threat model for details.
+encryption *in transit*, side-channel resistance, and the trustworthiness of the
+embedding model. See the threat model for details.
 
 ## Hardening & assurance in CI
 

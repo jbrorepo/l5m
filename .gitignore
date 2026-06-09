@@ -13,3 +13,7 @@
 # Editor / tooling directories
 /.vscode/
 /.kiro/
+
+# Private business/fundraising materials — never publish to the OSS repo
+/BUSINESS_PLAN.md
+/private/

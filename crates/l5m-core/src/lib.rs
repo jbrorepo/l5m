@@ -6,12 +6,16 @@
 //! `forbid(unsafe_code)`.
 #![deny(unsafe_code)]
 
+pub mod audit;
 pub mod bitset;
 pub mod capsule;
 pub mod compiler;
+#[cfg(feature = "encryption")]
+pub mod crypto;
 pub mod error;
 pub mod frame;
 pub mod index;
+pub mod metrics;
 pub mod probe;
 pub mod product;
 pub mod relation;
@@ -19,7 +23,9 @@ pub mod retrieve;
 pub mod scoring;
 pub mod segment;
 pub mod store;
+pub mod wal;
 
+pub use audit::{verify_chain as verify_audit_chain, AuditLog, AuditRecord};
 pub use capsule::MemoryCapsule;
 pub use compiler::{compile_segment, CompileOptions};
 pub use error::{L5mError, Result};

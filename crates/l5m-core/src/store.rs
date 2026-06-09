@@ -101,6 +101,10 @@ pub struct MemoryStore {
     /// Capsule ids hidden from results (deletes / supersessions).
     tombstones: HashSet<u128>,
     next_epoch: u64,
+    metrics: crate::metrics::Metrics,
+    /// When set, every mutation is durably appended here before it is
+    /// acknowledged, so writes survive a crash/restart.
+    wal: Option<crate::wal::Wal>,
 }
 
 struct LoadedSegment {
@@ -134,6 +138,8 @@ impl MemoryStore {
             delta_segment: None,
             tombstones: HashSet::new(),
             next_epoch,
+            metrics: crate::metrics::Metrics::new(),
+            wal: None,
         })
     }
 
@@ -146,16 +152,62 @@ impl MemoryStore {
             delta_segment: None,
             tombstones: HashSet::new(),
             next_epoch: 1,
+            metrics: crate::metrics::Metrics::new(),
+            wal: None,
         }
+    }
+
+    /// Open a **durable** store: load base segments, replay the write-ahead log
+    /// to recover acknowledged writes, then keep the WAL open so future
+    /// mutations are persisted before they return.
+    pub fn open_durable<I, P>(segment_paths: I, wal_path: impl AsRef<Path>) -> Result<Self>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        let mut store = Self::open_segments(segment_paths)?;
+        // Replay with the WAL still detached so replay does not re-log.
+        for op in crate::wal::Wal::replay(&wal_path)? {
+            match op {
+                crate::wal::WalOp::Insert { capsule } => {
+                    store.insert_json(&capsule)?;
+                }
+                crate::wal::WalOp::Delete { id } => {
+                    let id = crate::compiler::parse_u128(&id)?;
+                    store.delete(id)?;
+                }
+            }
+        }
+        store.wal = Some(crate::wal::Wal::open(&wal_path)?);
+        Ok(store)
+    }
+
+    fn wal_append(&mut self, op: &crate::wal::WalOp) -> Result<()> {
+        if let Some(wal) = self.wal.as_mut() {
+            wal.append(op)?;
+        }
+        Ok(())
+    }
+
+    /// Operational metrics in Prometheus text format (also via
+    /// `self.metrics().render_prometheus()`).
+    pub fn metrics(&self) -> &crate::metrics::Metrics {
+        &self.metrics
     }
 
     /// Ingest or update a memory at runtime. Same id replaces the prior live
     /// version; the capsule passes the identical gates at query time.
     pub fn insert(&mut self, capsule: MemoryCapsule) -> Result<()> {
+        // Durably log before applying, so an acknowledged write is recoverable.
+        let op = crate::wal::WalOp::Insert {
+            capsule: crate::compiler::capsule_to_json(&capsule),
+        };
+        self.wal_append(&op)?;
         let id = capsule.capsule_id;
         self.tombstones.remove(&id);
         self.delta.retain(|existing| existing.capsule_id != id);
         self.delta.push(capsule);
+        self.metrics.record_insert();
         self.rebuild_delta()
     }
 
@@ -171,19 +223,28 @@ impl MemoryStore {
         I: IntoIterator<Item = MemoryCapsule>,
     {
         for capsule in capsules {
+            let op = crate::wal::WalOp::Insert {
+                capsule: crate::compiler::capsule_to_json(&capsule),
+            };
+            self.wal_append(&op)?;
             let id = capsule.capsule_id;
             self.tombstones.remove(&id);
             self.delta.retain(|existing| existing.capsule_id != id);
             self.delta.push(capsule);
+            self.metrics.record_insert();
         }
         self.rebuild_delta()
     }
 
     /// Hide a capsule id from all future results (delete / supersede).
     pub fn delete(&mut self, capsule_id: u128) -> Result<()> {
+        self.wal_append(&crate::wal::WalOp::Delete {
+            id: capsule_id.to_string(),
+        })?;
         self.delta
             .retain(|existing| existing.capsule_id != capsule_id);
         self.tombstones.insert(capsule_id);
+        self.metrics.record_delete();
         self.rebuild_delta()
     }
 
@@ -232,6 +293,47 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Durable compaction: persist the live state to `checkpoint` on disk, make
+    /// it the sole base segment, then truncate the WAL. The checkpoint is written
+    /// (and fsync'd) **before** the WAL is truncated, so a crash mid-compaction
+    /// recovers by replaying the WAL on top of the previous state — never losing
+    /// an acknowledged write. After this, reopen with
+    /// `open_durable([checkpoint], wal_path)`.
+    pub fn compact_to(&mut self, checkpoint: impl AsRef<Path>) -> Result<()> {
+        let checkpoint = checkpoint.as_ref();
+        let mut live: Vec<MemoryCapsule> = Vec::new();
+        let mut seen: HashSet<u128> = HashSet::new();
+        for capsule in &self.delta {
+            if !self.tombstones.contains(&capsule.capsule_id) && seen.insert(capsule.capsule_id) {
+                live.push(capsule.clone());
+            }
+        }
+        for loaded in &self.segments {
+            for capsule in loaded.segment.capsules() {
+                if !self.tombstones.contains(&capsule.capsule_id) && seen.insert(capsule.capsule_id)
+                {
+                    live.push(capsule.clone());
+                }
+            }
+        }
+        // 1) Durably write the checkpoint segment.
+        crate::compiler::compile_capsules(checkpoint, live, self.next_epoch)?;
+        // 2) Adopt it as the sole base.
+        self.segments = vec![LoadedSegment {
+            path: Some(checkpoint.to_path_buf()),
+            segment: Segment::open(checkpoint)?,
+        }];
+        self.delta.clear();
+        self.delta_segment = None;
+        self.tombstones.clear();
+        self.next_epoch += 1;
+        // 3) Only now is it safe to drop the WAL history.
+        if let Some(wal) = self.wal.as_mut() {
+            wal.truncate()?;
+        }
+        Ok(())
+    }
+
     /// All queryable segments: immutable base segments plus the live delta.
     fn live_segments(&self) -> Vec<&Segment> {
         let mut segments: Vec<&Segment> =
@@ -266,13 +368,19 @@ impl MemoryStore {
             }
         };
         self.apply_tombstones_and_dedup(&mut frame, probe.max_capsules);
+        let elapsed = started.elapsed();
+        self.metrics.record_query(
+            frame.capsules.len(),
+            frame.coverage.candidate_count_before_scoring,
+            elapsed.as_nanos() as u64,
+        );
         Ok(QueryResponse {
             frame,
             mode: request.mode,
             config_hash: request.config_hash(),
             segment_count: self.live_segments().len(),
             segment_metadata: self.segment_metadata(),
-            total_retrieval_ns: started.elapsed().as_nanos(),
+            total_retrieval_ns: elapsed.as_nanos(),
         })
     }
 

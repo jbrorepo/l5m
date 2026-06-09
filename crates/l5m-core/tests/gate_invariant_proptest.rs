@@ -112,7 +112,7 @@ proptest! {
             prop_assert!(src.trust_level >= probe_trust, "trust gate violated");
             prop_assert!(src.valid_from <= probe_as_of, "temporal(from) gate violated");
             prop_assert!(
-                src.valid_until.map_or(true, |u| u >= probe_as_of),
+                src.valid_until.is_none_or(|u| u >= probe_as_of),
                 "temporal(until) gate violated"
             );
         }

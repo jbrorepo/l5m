@@ -60,3 +60,5 @@ jobs:
         run: cargo test -p l5m-core --release --test adversarial_gates --test embeddings
       - name: Segment-parser fuzzer (20k mutations)
         run: cargo test -p l5m-core --release --lib open_never_panics_on_adversarial_bytes
+      - name: Encryption-at-rest (sealed segments)
+        run: cargo test -p l5m-core --release --features encryption --test encryption

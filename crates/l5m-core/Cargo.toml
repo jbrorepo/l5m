@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 blake3.workspace = true
+chacha20poly1305 = { version = "0.10.1", optional = true }
+getrandom = { version = "0.4.2", optional = true }
 memmap2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -14,3 +16,8 @@ serde_json.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 proptest = "1.11.0"
+
+[features]
+# Enterprise encryption-at-rest (sealed segments). Off by default so the OSS
+# core keeps a minimal dependency tree.
+encryption = ["dep:chacha20poly1305", "dep:getrandom"]

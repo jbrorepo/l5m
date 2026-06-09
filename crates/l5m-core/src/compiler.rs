@@ -33,12 +33,94 @@ pub struct CompileOptions {
 }
 
 pub fn compile_segment(options: CompileOptions) -> Result<()> {
-    let input = fs::read_to_string(&options.input_json)?;
+    let built = build_segment_bytes(&options.input_json, options.epoch)?;
+    if let Some(parent) = options.output_segment.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::File::create(&options.output_segment)?;
+    file.write_all(&built.bytes)?;
+    file.sync_all()?;
+    write_manifest(&options.output_segment, &built)?;
+    Ok(())
+}
+
+/// Compile and **encrypt at rest** in one step: the plaintext segment never
+/// touches disk. Requires the `encryption` feature.
+#[cfg(feature = "encryption")]
+pub fn compile_segment_sealed(
+    options: CompileOptions,
+    key: &dyn crate::crypto::KeyProvider,
+) -> Result<()> {
+    let built = build_segment_bytes(&options.input_json, options.epoch)?;
+    let sealed = crate::crypto::seal(&built.bytes, &key.key()?)?;
+    if let Some(parent) = options.output_segment.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::File::create(&options.output_segment)?;
+    file.write_all(&sealed)?;
+    file.sync_all()?;
+    write_manifest(&options.output_segment, &built)?;
+    Ok(())
+}
+
+pub(crate) struct BuiltSegment {
+    pub bytes: Vec<u8>,
+    pub capsule_count: u64,
+    pub tenant_id: u64,
+    pub epoch: u64,
+    pub hash: blake3::Hash,
+}
+
+fn write_manifest(output_segment: &std::path::Path, built: &BuiltSegment) -> Result<()> {
+    let manifest = Manifest {
+        epoch: built.epoch,
+        capsule_count: built.capsule_count,
+        tenant_id: built.tenant_id,
+        segment_hash: hex32(built.hash.as_bytes()),
+        build_time_unix: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0),
+    };
+    fs::write(
+        output_segment.with_extension("segment.manifest.json"),
+        serde_json::to_string_pretty(&manifest)?,
+    )?;
+    Ok(())
+}
+
+/// Write a segment file directly from already-built capsules (no JSON round
+/// trip). Used by the durable store to checkpoint its live state.
+pub fn compile_capsules(
+    output_segment: &std::path::Path,
+    capsules: Vec<MemoryCapsule>,
+    epoch: u64,
+) -> Result<()> {
+    let built = assemble_segment(capsules, epoch)?;
+    if let Some(parent) = output_segment.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::File::create(output_segment)?;
+    file.write_all(&built.bytes)?;
+    file.sync_all()?;
+    write_manifest(output_segment, &built)?;
+    Ok(())
+}
+
+pub(crate) fn build_segment_bytes(
+    input_json: &std::path::Path,
+    epoch: u64,
+) -> Result<BuiltSegment> {
+    let input = fs::read_to_string(input_json)?;
     let raw: Vec<RawCapsule> = serde_json::from_str(&input)?;
     let mut capsules = Vec::with_capacity(raw.len());
     for capsule in raw {
         capsules.push(capsule.into_capsule()?);
     }
+    assemble_segment(capsules, epoch)
+}
+
+fn assemble_segment(mut capsules: Vec<MemoryCapsule>, epoch: u64) -> Result<BuiltSegment> {
     capsules.sort_by_key(|capsule| capsule.capsule_id);
     let tenant_id = capsules.first().map_or(0, |capsule| capsule.tenant_id);
 
@@ -103,7 +185,7 @@ pub fn compile_segment(options: CompileOptions) -> Result<()> {
     write_header_prefix(
         &mut bytes,
         HeaderFields {
-            epoch: options.epoch,
+            epoch,
             tenant_id,
             capsule_count: capsules.len() as u64,
             metadata_offset,
@@ -132,30 +214,13 @@ pub fn compile_segment(options: CompileOptions) -> Result<()> {
     let hash = segment_hash(&bytes);
     bytes[HASH_OFFSET..HASH_OFFSET + HASH_LEN].copy_from_slice(hash.as_bytes());
 
-    if let Some(parent) = options.output_segment.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = fs::File::create(&options.output_segment)?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-
-    let manifest = Manifest {
-        epoch: options.epoch,
+    Ok(BuiltSegment {
         capsule_count: capsules.len() as u64,
         tenant_id,
-        segment_hash: hex32(hash.as_bytes()),
-        build_time_unix: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0),
-    };
-    fs::write(
-        options
-            .output_segment
-            .with_extension("segment.manifest.json"),
-        serde_json::to_string_pretty(&manifest)?,
-    )?;
-    Ok(())
+        epoch,
+        hash,
+        bytes,
+    })
 }
 
 /// Build a single `MemoryCapsule` (computing fingerprints, anchors, entities,
@@ -164,6 +229,52 @@ pub fn compile_segment(options: CompileOptions) -> Result<()> {
 pub fn capsule_from_json(value: &serde_json::Value) -> Result<MemoryCapsule> {
     let raw: RawCapsule = serde_json::from_value(value.clone())?;
     raw.into_capsule()
+}
+
+/// Serialize a built capsule back into the JSON shape `capsule_from_json`
+/// accepts. Used by the durable write-ahead log so a replay reconstructs an
+/// equivalent capsule. (Fingerprints are recomputed deterministically on
+/// replay, so they need not be stored.)
+pub fn capsule_to_json(capsule: &MemoryCapsule) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "capsule_id": capsule.capsule_id.to_string(),
+        "tenant_id": capsule.tenant_id,
+        "claim": capsule.claim,
+        "evidence": capsule.evidence,
+        "source_id": capsule.source_id,
+        "valid_from": capsule.valid_from,
+        "observed_at": capsule.observed_at,
+        "last_verified_at": capsule.last_verified_at,
+        "context_mask": format!("{:#x}", capsule.context_mask),
+        "policy_mask": format!("{:#x}", capsule.policy_mask),
+        "trust_level": capsule.trust_level,
+        "classification": capsule.classification,
+        "poison_risk": capsule.poison_risk,
+        "anchors": capsule.anchors,
+        "entities": capsule.entities,
+    });
+    if let Some(uri) = &capsule.source_uri {
+        value["source_uri"] = serde_json::json!(uri);
+    }
+    if let Some(until) = capsule.valid_until {
+        value["valid_until"] = serde_json::json!(until);
+    }
+    if !capsule.embedding.is_empty() {
+        value["embedding"] = serde_json::json!(capsule.embedding);
+    }
+    if !capsule.relation_edges.is_empty() {
+        value["relation_edges"] = serde_json::json!(capsule
+            .relation_edges
+            .iter()
+            .map(|e| serde_json::json!({
+                "from": e.from.to_string(),
+                "to": e.to.to_string(),
+                "kind": e.kind,
+                "weight": e.weight,
+            }))
+            .collect::<Vec<_>>());
+    }
+    value
 }
 
 #[derive(Debug, Deserialize)]

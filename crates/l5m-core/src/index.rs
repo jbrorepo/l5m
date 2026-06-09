@@ -68,6 +68,96 @@ impl SemanticLsh {
     }
 }
 
+/// Cosine-LSH over dense embeddings (random-hyperplane SimHash). Each embedding
+/// gets a 64-bit signature (sign of its projection onto 64 fixed random
+/// hyperplanes); banding the signature into 16-bit chunks lets a query embedding
+/// find its near neighbors by visiting only matching bands — sublinear dense
+/// candidate generation within a large tenant, instead of scoring everything.
+#[derive(Clone, Debug, Default)]
+pub struct EmbeddingLsh {
+    dim: usize,
+    hyperplanes: Vec<Vec<f32>>,
+    tables: Vec<HashMap<u16, Vec<u32>>>,
+}
+
+const SIG_BANDS: usize = 4; // 4 × 16-bit bands = a 64-bit signature
+
+impl EmbeddingLsh {
+    pub fn build(embeddings: &[&[f32]]) -> Option<Self> {
+        let dim = embeddings.iter().find(|e| !e.is_empty())?.len();
+        if dim == 0 {
+            return None;
+        }
+        // Deterministic ±1 hyperplanes (64 of them) so build and query agree.
+        let mut state = 0x1234_5678_9abc_def0u64;
+        let hyperplanes: Vec<Vec<f32>> = (0..(SIG_BANDS * 16))
+            .map(|_| {
+                (0..dim)
+                    .map(|_| {
+                        if splitmix64(&mut state) & 1 == 0 {
+                            1.0
+                        } else {
+                            -1.0
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut tables = vec![HashMap::<u16, Vec<u32>>::new(); SIG_BANDS];
+        for (ordinal, emb) in embeddings.iter().enumerate() {
+            if emb.len() != dim {
+                continue;
+            }
+            let sig = signature(emb, &hyperplanes);
+            for (band, table) in tables.iter_mut().enumerate() {
+                let key = ((sig >> (16 * band)) & 0xffff) as u16;
+                table.entry(key).or_default().push(ordinal as u32);
+            }
+        }
+        Some(Self {
+            dim,
+            hyperplanes,
+            tables,
+        })
+    }
+
+    /// Visit candidate ordinals whose embedding shares a SimHash band with
+    /// `query` (i.e. are likely cosine-near). Caller dedups + gate-filters.
+    pub fn for_each_candidate(&self, query: &[f32], mut visit: impl FnMut(usize)) {
+        if query.len() != self.dim {
+            return;
+        }
+        let sig = signature(query, &self.hyperplanes);
+        for (band, table) in self.tables.iter().enumerate() {
+            let key = ((sig >> (16 * band)) & 0xffff) as u16;
+            if let Some(postings) = table.get(&key) {
+                for &ordinal in postings {
+                    visit(ordinal as usize);
+                }
+            }
+        }
+    }
+}
+
+fn signature(emb: &[f32], hyperplanes: &[Vec<f32>]) -> u64 {
+    let mut sig = 0u64;
+    for (i, plane) in hyperplanes.iter().enumerate() {
+        let dot: f32 = emb.iter().zip(plane).map(|(a, b)| a * b).sum();
+        if dot >= 0.0 {
+            sig |= 1u64 << i;
+        }
+    }
+    sig
+}
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SegmentIndex {
     pub anchors: HashMap<u64, Vec<usize>>,
@@ -88,6 +178,8 @@ pub struct SegmentIndex {
     /// the first selectivity win: a probe scans only its own tenant's ordinals
     /// instead of the whole segment.
     pub tenant_postings: HashMap<u64, Vec<u32>>,
+    /// Cosine-LSH over dense embeddings (present only when capsules carry them).
+    pub embedding_lsh: Option<EmbeddingLsh>,
 }
 
 impl SegmentIndex {
@@ -161,6 +253,10 @@ impl SegmentIndex {
             }
         }
         index.lsh = SemanticLsh::build(&index.fingerprints);
+        if capsules.iter().any(|c| !c.embedding.is_empty()) {
+            let embeddings: Vec<&[f32]> = capsules.iter().map(|c| c.embedding.as_slice()).collect();
+            index.embedding_lsh = EmbeddingLsh::build(&embeddings);
+        }
         index
     }
 }

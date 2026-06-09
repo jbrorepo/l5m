@@ -4,6 +4,7 @@ members = [
     "crates/l5m-cli",
     "crates/l5m-bench",
     "crates/l5m-benchmarks",
+    "crates/l5m-server",
 ]
 resolver = "2"
 

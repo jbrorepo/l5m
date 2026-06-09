@@ -34,23 +34,44 @@ impl Segment {
         // continuously fuzzed (`open_never_panics_on_adversarial_bytes`).
         #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
-        validate_header(&mmap)?;
-        let stored_hash = &mmap[HASH_OFFSET..HASH_OFFSET + HASH_LEN];
-        let computed_hash = segment_hash(&mmap);
+        let mut segment = Self::from_bytes(&mmap)?;
+        segment._mmap = Some(mmap);
+        Ok(segment)
+    }
+
+    /// Open an **encrypted-at-rest** (sealed) segment: read, AEAD-decrypt with
+    /// the supplied 32-byte key, then parse the plaintext exactly like `open`.
+    /// The decrypted bytes live only in this process's memory. Requires the
+    /// `encryption` feature.
+    #[cfg(feature = "encryption")]
+    pub fn open_sealed(path: impl AsRef<Path>, key: &[u8; 32]) -> Result<Self> {
+        let sealed = std::fs::read(path)?;
+        let plaintext = crate::crypto::unseal(&sealed, key)?;
+        Self::from_bytes(&plaintext)
+    }
+
+    /// Parse and validate a segment from an in-memory byte buffer (used by
+    /// `open` over an mmap and by `open_sealed` over decrypted bytes). The
+    /// returned segment owns all its data, so the backing bytes need not be
+    /// retained. Treats every byte as untrusted.
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        validate_header(bytes)?;
+        let stored_hash = &bytes[HASH_OFFSET..HASH_OFFSET + HASH_LEN];
+        let computed_hash = segment_hash(bytes);
         if stored_hash != computed_hash.as_bytes() {
             return Err(L5mError::Format("segment hash mismatch".to_string()));
         }
 
-        let epoch = read_u64(&mmap, 16)?;
-        let tenant_id = read_u64(&mmap, 24)?;
-        let capsule_count = read_u64(&mmap, 32)? as usize;
-        let metadata_offset = read_u64(&mmap, 40)? as usize;
-        let string_offset = read_u64(&mmap, 48)? as usize;
-        let relation_offset = read_u64(&mmap, 56)? as usize;
-        let index_offset = read_u64(&mmap, 64)? as usize;
+        let epoch = read_u64(bytes, 16)?;
+        let tenant_id = read_u64(bytes, 24)?;
+        let capsule_count = read_u64(bytes, 32)? as usize;
+        let metadata_offset = read_u64(bytes, 40)? as usize;
+        let string_offset = read_u64(bytes, 48)? as usize;
+        let relation_offset = read_u64(bytes, 56)? as usize;
+        let index_offset = read_u64(bytes, 64)? as usize;
 
         validate_sections(
-            &mmap,
+            bytes,
             capsule_count,
             metadata_offset,
             string_offset,
@@ -62,7 +83,7 @@ impl Segment {
         for ordinal in 0..capsule_count {
             let base = metadata_offset + ordinal * METADATA_LEN;
             capsules.push(read_capsule(
-                &mmap,
+                bytes,
                 base,
                 string_offset,
                 relation_offset,
@@ -72,23 +93,23 @@ impl Segment {
 
         // Optional dense embedding area (additive format; absent in older
         // segments where these spare header bytes are zero).
-        let embedding_dim = read_u32(&mmap, EMBED_DIM_OFFSET)? as usize;
+        let embedding_dim = read_u32(bytes, EMBED_DIM_OFFSET)? as usize;
         if embedding_dim > 0 {
-            let vector_offset = read_u64(&mmap, VECTOR_AREA_OFFSET)? as usize;
+            let vector_offset = read_u64(bytes, VECTOR_AREA_OFFSET)? as usize;
             let bytes_per_capsule = embedding_dim
                 .checked_mul(4)
                 .ok_or_else(|| L5mError::Format("embedding row overflows usize".to_string()))?;
             let total = capsule_count
                 .checked_mul(bytes_per_capsule)
                 .ok_or_else(|| L5mError::Format("embedding area overflows usize".to_string()))?;
-            checked_range(&mmap, vector_offset, total)?;
+            checked_range(bytes, vector_offset, total)?;
             for (ordinal, capsule) in capsules.iter_mut().enumerate() {
                 let mut embedding = Vec::with_capacity(embedding_dim);
                 let row = vector_offset + ordinal * bytes_per_capsule;
                 for lane in 0..embedding_dim {
                     let at = row + lane * 4;
                     embedding.push(f32::from_le_bytes(
-                        mmap[at..at + 4].try_into().expect("slice length"),
+                        bytes[at..at + 4].try_into().expect("slice length"),
                     ));
                 }
                 capsule.embedding = embedding;
@@ -102,7 +123,7 @@ impl Segment {
             ));
         }
         Ok(Self {
-            _mmap: Some(mmap),
+            _mmap: None,
             epoch,
             tenant_id,
             capsules,
