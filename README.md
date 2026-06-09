@@ -133,6 +133,21 @@ Top-K Results
 
 **Why this matters:** No unauthorized capsule can leak through semantic similarity. Security is enforced before performance optimization.
 
+**See it for yourself** — a runnable proof that a *perfect-match* secret is never
+scored for an unauthorized caller (cross-tenant, and missing-clearance), yet is
+returned to the authorized one. The process exits non-zero if any gate leaks:
+
+```bash
+cargo run -p l5m-core --example leak_demo
+```
+
+```
+[PASS] Cross-tenant isolation   — tenant 42 queries the exact secret text
+[PASS] Policy clearance gate    — tenant 7 caller WITHOUT the 0x4 clearance bit
+[PASS] Authorized retrieval     — tenant 7 caller WITH the 0x4 clearance bit
+RESULT: all gates held.
+```
+
 ---
 
 ## Benchmarks
