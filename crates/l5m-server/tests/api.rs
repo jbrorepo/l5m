@@ -361,6 +361,117 @@ async fn scoped_keys_enforce_read_write_and_tenant_binding() {
 }
 
 #[tokio::test]
+async fn usage_endpoint_is_admin_only_and_meters_per_tenant() {
+    use l5m_server::{Scope, ScopedKey};
+    let app = app_with_provider(Arc::new(l5m_server::HeaderPrincipalProvider::with_keys(
+        vec![
+            ScopedKey {
+                secret: "rw".into(),
+                scope: Scope::Write,
+                tenant: None,
+            },
+            ScopedKey {
+                secret: "root".into(),
+                scope: Scope::Admin,
+                tenant: None,
+            },
+        ],
+    )));
+
+    // Generate activity: tenant 1 inserts + queries twice; tenant 2 queries once.
+    let cap = serde_json::json!({
+        "capsule_id":"1","tenant_id":1,
+        "claim":"metered kelpstone","evidence":"metered kelpstone",
+        "source_id":1,"valid_from":1,"observed_at":1,"last_verified_at":1,
+        "context_mask":"0xffff","policy_mask":"0xffff","trust_level":8,
+        "classification":1,"poison_risk":0
+    });
+    let req = |key: &str, method: &str, uri: &str, tenant: &str, body: Body| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("x-l5m-api-key", key)
+            .header("x-l5m-tenant", tenant)
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap()
+    };
+    let q = || Body::from(serde_json::json!({"query":"metered kelpstone"}).to_string());
+    app.clone()
+        .oneshot(req(
+            "rw",
+            "POST",
+            "/v1/memories",
+            "1",
+            Body::from(cap.to_string()),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(req("rw", "POST", "/v1/query", "1", q()))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(req("rw", "POST", "/v1/query", "1", q()))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(req("rw", "POST", "/v1/query", "2", q()))
+        .await
+        .unwrap();
+
+    // Write-scope key cannot read usage.
+    let status = app
+        .clone()
+        .oneshot(req("rw", "GET", "/v1/usage", "1", Body::empty()))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::FORBIDDEN, "usage requires admin scope");
+
+    // Admin key sees per-tenant metering that matches the activity.
+    let resp = app
+        .clone()
+        .oneshot(req("root", "GET", "/v1/usage", "1", Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp).await;
+    let tenants = v["tenants"].as_array().cloned().unwrap_or_default();
+    let row = |id: u64| {
+        tenants
+            .iter()
+            .find(|t| t["tenant"] == serde_json::json!(id))
+            .cloned()
+            .unwrap_or_else(|| panic!("tenant {id} missing from usage: {v}"))
+    };
+    assert_eq!(row(1)["queries"], 2);
+    assert_eq!(row(1)["inserts"], 1);
+    assert_eq!(row(2)["queries"], 1);
+    assert_eq!(row(2)["inserts"], 0);
+
+    // The Prometheus exposition carries the same per-tenant series.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        text.contains("l5m_tenant_queries_total{tenant=\"1\"} 2"),
+        "{text}"
+    );
+    assert!(text.contains("l5m_tenant_inserts_total{tenant=\"1\"} 1"));
+}
+
+#[tokio::test]
 async fn rate_limiter_returns_429_when_exceeded() {
     // burst of 2, slow refill -> the 3rd immediate query is throttled.
     let app = app_full(None, Some(l5m_server::RateLimiter::new(0.1, 2.0)));

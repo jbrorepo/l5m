@@ -76,6 +76,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/memories", post(insert))
         .route("/v1/memories/:id", axum::routing::delete(delete_memory))
         .route("/v1/audit/verify", get(audit_verify))
+        .route("/v1/usage", get(usage))
         .layer(RequestBodyLimitLayer::new(max_body))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -108,6 +109,33 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Per-tenant usage (metering/billing) — admin scope required.
+async fn usage(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let _admin = state.authorize(&headers, Scope::Admin)?;
+    let rows = state.store.read().await.metrics().usage_snapshot();
+    let tenants: Vec<Value> = rows
+        .into_iter()
+        .map(|(tenant, usage)| {
+            let tenant_label = if tenant == u64::MAX {
+                json!("other")
+            } else {
+                json!(tenant)
+            };
+            json!({
+                "tenant": tenant_label,
+                "queries": usage.queries,
+                "capsules_returned": usage.capsules_returned,
+                "inserts": usage.inserts,
+                "deletes": usage.deletes,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "tenants": tenants })).into_response())
 }
 
 async fn metrics(State(state): State<Arc<AppState>>) -> Response {

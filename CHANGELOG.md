@@ -21,6 +21,15 @@ All notable changes to L5M are documented here. Format loosely follows
   kid selection, forged-key rejection, and live rotation (old key retired,
   new key accepted, same process).
 
+### Metering & observability
+- **Per-tenant usage metrics**: queries, capsules returned, inserts, and
+  deletes are now attributed to the tenant that incurred them — the metering
+  record for billing/quotas. Exposed two ways: Prometheus series with a
+  `tenant` label (`l5m_tenant_queries_total{tenant="7"}` …) and a JSON
+  `GET /v1/usage` endpoint requiring an **admin-scope** credential.
+  Cardinality is capped (10k tenants; overflow aggregates into `other`) so a
+  tenant-id-spraying client cannot blow up metrics memory.
+
 ### Integrations
 - **MCP server** (`l5m-mcp` crate): security-gated memory for any MCP host
   (Claude Desktop/Code, ChatGPT, Copilot, custom agents) over stdio JSON-RPC.

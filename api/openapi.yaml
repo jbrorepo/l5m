@@ -205,6 +205,34 @@ paths:
         "200": { description: Deleted }
         "400": { description: Invalid id }
         "401": { description: Unauthorized }
+  /v1/usage:
+    get:
+      summary: Per-tenant usage (metering) — admin scope required
+      description: |
+        Returns query/insert/delete/returned-capsule counters per tenant —
+        the metering record for billing and quotas. Requires an `admin`-scope
+        credential; lower scopes receive 403.
+      responses:
+        "200":
+          description: Usage rows
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tenant:
+                          description: Tenant id, or "other" for the overflow bucket.
+                          oneOf: [{ type: integer }, { type: string }]
+                        queries: { type: integer }
+                        capsules_returned: { type: integer }
+                        inserts: { type: integer }
+                        deletes: { type: integer }
+        "403": { description: Credential lacks admin scope }
   /v1/audit/verify:
     get:
       summary: Verify the tamper-evident audit chain

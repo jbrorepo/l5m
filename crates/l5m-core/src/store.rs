@@ -290,8 +290,10 @@ impl MemoryStore {
             capsule: crate::compiler::capsule_to_json(&capsule),
         };
         self.wal_append(&op)?;
+        let tenant = capsule.tenant_id;
         self.push_into_buffer(capsule);
         self.metrics.record_insert();
+        self.metrics.record_insert_for(tenant);
         self.seal_or_reindex()?;
         self.maybe_auto_compact()
     }
@@ -312,8 +314,10 @@ impl MemoryStore {
                 capsule: crate::compiler::capsule_to_json(&capsule),
             };
             self.wal_append(&op)?;
+            let tenant = capsule.tenant_id;
             self.push_into_buffer(capsule);
             self.metrics.record_insert();
+            self.metrics.record_insert_for(tenant);
             if self.delta.len() >= self.seal_threshold {
                 self.seal_active_buffer()?;
                 self.maybe_auto_compact()?;
@@ -560,6 +564,8 @@ impl MemoryStore {
             frame.coverage.candidate_count_before_scoring,
             elapsed.as_nanos() as u64,
         );
+        self.metrics
+            .record_query_for(request.tenant_id, frame.capsules.len());
         Ok(QueryResponse {
             frame,
             mode: request.mode,

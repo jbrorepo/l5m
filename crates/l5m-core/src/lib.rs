@@ -30,6 +30,7 @@ pub use capsule::MemoryCapsule;
 pub use compiler::{compile_segment, CompileOptions};
 pub use error::{L5mError, Result};
 pub use frame::{CoverageReport, FrameCapsule, MemoryFrame};
+pub use metrics::TenantUsage;
 pub use probe::MemoryProbe;
 pub use product::{
     compile_product_memories, segment_paths_from_product_dir, ProductCompileManifest,
