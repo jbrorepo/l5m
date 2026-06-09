@@ -54,6 +54,16 @@ impl Segment {
     /// `open` over an mmap and by `open_sealed` over decrypted bytes). The
     /// returned segment owns all its data, so the backing bytes need not be
     /// retained. Treats every byte as untrusted.
+    /// Parse a segment from **fully untrusted** bytes (no mmap backing).
+    ///
+    /// This is the same code path as [`Segment::open`] minus the memory map, and
+    /// is the designated fuzz entry point: it must return `Err` — never panic,
+    /// over-allocate, or read out of bounds — on arbitrary input. Used by the
+    /// in-tree mutational fuzzer and the `cargo-fuzz` target (`fuzz/`).
+    pub fn from_untrusted_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::from_bytes(bytes)
+    }
+
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
         validate_header(bytes)?;
         let stored_hash = &bytes[HASH_OFFSET..HASH_OFFSET + HASH_LEN];

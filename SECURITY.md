@@ -61,4 +61,22 @@ cargo test -p l5m-core --test gate_invariant_proptest    # gate invariant (rando
 cargo test -p l5m-core --test adversarial_gates          # perfect-match bypass attempts
 cargo test -p l5m-core --test embeddings                 # dense match cannot bypass gates
 cargo test -p l5m-core --lib open_never_panics           # parser fuzzer (20k mutations)
+cargo run  -p l5m-core --example leak_demo               # gate-before-scoring proof (exits non-zero on leak)
 ```
+
+### Coverage-guided fuzzing (cargo-fuzz)
+
+In addition to the in-tree mutational fuzzer above, the segment parser has a
+libFuzzer target driven by [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz)
+(`fuzz/fuzz_targets/segment_parse.rs`), run in CI for a bounded session and
+runnable locally for longer campaigns:
+
+```bash
+cargo install cargo-fuzz
+cargo +nightly fuzz run segment_parse                       # until a crash / Ctrl-C
+cargo +nightly fuzz run segment_parse -- -max_total_time=60 # bounded
+```
+
+The invariant: `Segment::from_untrusted_bytes` must reject arbitrary input with
+an `Err` — never panic, over-allocate, or read out of bounds. (Fuzzing already
+caught and fixed a real 159 GB-allocation DoS from an unvalidated length field.)

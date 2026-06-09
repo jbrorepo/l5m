@@ -51,6 +51,19 @@ jobs:
         run: python -m pytest -q
         working-directory: clients/python
 
+  fuzz:
+    name: cargo-fuzz (segment parser, bounded)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz the segment parser (bounded 60s)
+        # Coverage-guided libFuzzer run; non-zero exit on any crash/OOM/timeout.
+        run: cargo fuzz run segment_parse -- -max_total_time=60 -rss_limit_mb=4096
+
   supply-chain:
     name: cargo-deny (advisories, licenses, bans)
     runs-on: ubuntu-latest

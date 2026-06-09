@@ -1,0 +1,34 @@
+# Coverage-guided (libFuzzer) fuzzing for the segment parser. Detached from the
+# parent workspace (own empty [workspace] table) so a stable `cargo build` at the
+# repo root never tries to build it — cargo-fuzz requires a nightly toolchain.
+#
+#   cargo install cargo-fuzz
+#   cargo +nightly fuzz run segment_parse        # run until a crash / Ctrl-C
+#   cargo +nightly fuzz run segment_parse -- -max_total_time=60   # bounded (CI)
+[package]
+name = "l5m-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.l5m-core]
+path = "../crates/l5m-core"
+
+[[bin]]
+name = "segment_parse"
+path = "fuzz_targets/segment_parse.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
+
+# Detach from the root workspace.
+[workspace]
