@@ -6,6 +6,10 @@
 //!   L5M_SEGMENTS comma-separated segment paths to load (optional; empty = start
 //!                from a pure real-time store)
 //!   L5M_API_KEY  if set, require a matching `X-L5M-Api-Key` header
+//!   L5M_API_KEYS scoped keys: comma-separated `secret:scope[:tenant]`
+//!                (scope = read|write|admin; optional tenant binding)
+//!   L5M_JWT_JWKS_FILE  path to a JWKS document for RS256 verification with
+//!                kid-based key selection; hot-reloaded when the file changes
 //!   L5M_DELTA_SEAL_THRESHOLD  active write-buffer size before sealing a run
 //!   L5M_AUTO_COMPACT_RUNS     sealed-run count that triggers minor compaction
 //!                             (0 disables automatic compaction)
@@ -76,10 +80,22 @@ async fn main() {
         _ => None,
     };
 
-    // Principal resolution: prefer a verified JWT in production; fall back to the
+    // Principal resolution: prefer a verified JWT in production (JWKS file with
+    // kid-based rotation, or a single HS256/RS256 key); fall back to the
     // header/API-key provider for dev / trusted networks.
     let principal: Arc<dyn l5m_server::principal::PrincipalProvider> =
-        if let Ok(secret) = std::env::var("L5M_JWT_HS256_SECRET") {
+        if let Ok(jwks_path) = std::env::var("L5M_JWT_JWKS_FILE") {
+            match l5m_server::JwksPrincipalProvider::from_file(&jwks_path) {
+                Ok(provider) => {
+                    tracing::info!(%jwks_path, "auth: JWT RS256 via JWKS (hot-reload on change)");
+                    Arc::new(provider)
+                }
+                Err(err) => {
+                    tracing::error!(%err, "failed to load JWKS");
+                    std::process::exit(1);
+                }
+            }
+        } else if let Ok(secret) = std::env::var("L5M_JWT_HS256_SECRET") {
             tracing::info!("auth: JWT HS256");
             Arc::new(l5m_server::JwtPrincipalProvider::hs256(secret.as_bytes()))
         } else if let Ok(pem_path) = std::env::var("L5M_JWT_RS256_PEM_FILE") {
@@ -97,9 +113,24 @@ async fn main() {
                     std::process::exit(1);
                 }
             }
+        } else if let Ok(list) = std::env::var("L5M_API_KEYS") {
+            // Scoped keys: comma-separated `secret:scope[:tenant]` entries,
+            // e.g. "k1:read,k2:write:7,k3:admin".
+            let mut keys = Vec::new();
+            for entry in list.split(',').filter(|e| !e.trim().is_empty()) {
+                match l5m_server::ScopedKey::parse(entry) {
+                    Ok(key) => keys.push(key),
+                    Err(err) => {
+                        tracing::error!(%err, "bad L5M_API_KEYS entry");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            tracing::info!(count = keys.len(), "auth: scoped API keys");
+            Arc::new(HeaderPrincipalProvider::with_keys(keys))
         } else {
             tracing::warn!("auth: header/API-key provider (use JWT in production)");
-            Arc::new(HeaderPrincipalProvider { api_key })
+            Arc::new(HeaderPrincipalProvider::from_optional_key(api_key))
         };
 
     // Optional per-tenant rate limiting + request body cap.

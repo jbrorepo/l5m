@@ -5,6 +5,15 @@
 version = 2
 # Fail on any security advisory affecting the dependency tree.
 yanked = "deny"
+ignore = [
+    # Marvin attack (RSA decryption timing side channel), no fixed upstream
+    # release yet. Scoped acceptance: `rsa` is a DEV-ONLY dependency of
+    # l5m-server's JWKS tests, used solely to generate throwaway keypairs at
+    # test runtime. It is not part of any shipped binary, and the server only
+    # VERIFIES RS256 signatures (via jsonwebtoken/ring) — it never performs
+    # RSA decryption with a long-lived private key.
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
 version = 2

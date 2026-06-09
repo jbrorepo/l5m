@@ -5,6 +5,22 @@ All notable changes to L5M are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Access control
+- **Scoped API keys**: `L5M_API_KEYS=secret:scope[:tenant],…` configures
+  multiple keys, each `read` | `write` | `admin`. Queries require `read`;
+  inserts/deletes require `write`; over-scope requests get HTTP 403. A key may
+  be **tenant-bound**, in which case it can only ever act as that tenant —
+  the binding overrides whatever `X-L5M-Tenant` claims (tested).
+- **JWT `scope` claim**: bearer tokens may carry `scope: read|write|admin`
+  (default write), enforced identically.
+- **JWKS key rotation** (`L5M_JWT_JWKS_FILE`): RS256 verification keys loaded
+  from a standard JWKS document with `kid`-based selection, hot-reloaded when
+  the file changes — rotate IdP keys with zero server restarts. A malformed
+  mid-rotation file keeps the previous keys (fail-safe). No HTTP client added
+  to the binary; fetching the JWKS is a sidecar/cron concern. Tests cover
+  kid selection, forged-key rejection, and live rotation (old key retired,
+  new key accepted, same process).
+
 ### Integrations
 - **MCP server** (`l5m-mcp` crate): security-gated memory for any MCP host
   (Claude Desktop/Code, ChatGPT, Copilot, custom agents) over stdio JSON-RPC.

@@ -19,3 +19,7 @@ jsonwebtoken = "9"
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile.workspace = true
+# JWKS tests generate throwaway RSA keys at runtime — no private-key material
+# is ever committed to the repository.
+rsa = "0.9"
+rand = "0.8"

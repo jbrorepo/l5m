@@ -47,9 +47,16 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Resolve + authorize the caller: principal, then per-tenant rate limit.
-    fn authorize(&self, headers: &HeaderMap) -> Result<Principal, ApiError> {
+    /// Resolve + authorize the caller: principal, credential scope for the
+    /// requested operation, then per-tenant rate limit.
+    fn authorize(&self, headers: &HeaderMap, required: Scope) -> Result<Principal, ApiError> {
         let principal = self.principal.principal(headers)?;
+        if principal.scope < required {
+            return Err(ApiError::forbidden(format!(
+                "credential scope {:?} does not permit this operation (requires {required:?})",
+                principal.scope
+            )));
+        }
         if let Some(limiter) = &self.rate_limiter {
             if !limiter.allow(principal.tenant_id) {
                 return Err(ApiError::too_many());
@@ -131,7 +138,7 @@ async fn query(
     headers: HeaderMap,
     Json(body): Json<QueryBody>,
 ) -> Result<Response, ApiError> {
-    let principal = state.authorize(&headers)?;
+    let principal = state.authorize(&headers, Scope::Read)?;
     let request = QueryRequest {
         query: body.query,
         tenant_id: principal.tenant_id,
@@ -172,7 +179,7 @@ async fn insert(
     headers: HeaderMap,
     Json(mut capsule): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let principal = state.authorize(&headers)?;
+    let principal = state.authorize(&headers, Scope::Write)?;
     // Enforce tenant ownership: a caller may only write into its own tenant,
     // regardless of what the body claims.
     capsule["tenant_id"] = json!(principal.tenant_id);
@@ -190,7 +197,7 @@ async fn delete_memory(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let _principal = state.authorize(&headers)?;
+    let _principal = state.authorize(&headers, Scope::Write)?;
     let id: u128 = id
         .parse()
         .map_err(|_| ApiError::bad_request("capsule id must be an integer".to_string()))?;
@@ -237,6 +244,12 @@ impl ApiError {
             message: "rate limit exceeded".to_string(),
         }
     }
+    fn forbidden(message: String) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message,
+        }
+    }
 }
 
 impl From<AuthError> for ApiError {
@@ -257,6 +270,8 @@ impl IntoResponse for ApiError {
 }
 
 // Re-export so `main` and tests can construct a provider.
-pub use principal::{HeaderPrincipalProvider, JwtPrincipalProvider};
+pub use principal::{
+    HeaderPrincipalProvider, JwksPrincipalProvider, JwtPrincipalProvider, Scope, ScopedKey,
+};
 pub use ratelimit::RateLimiter;
 pub type SharedState = Arc<AppState>;
