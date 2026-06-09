@@ -167,17 +167,59 @@ impl MemoryStore {
     {
         let mut store = Self::open_segments(segment_paths)?;
         // Replay with the WAL still detached so replay does not re-log.
+        //
+        // Fold the whole log into the final delta state in a single pass, then
+        // build the delta index ONCE. Replaying op-by-op through `insert`/`delete`
+        // would rebuild the delta segment on every entry — O(N^2) in the log size,
+        // which dominates restart time on a busy store. Last-writer-wins per id is
+        // preserved by applying ops in order into a positional map.
+        let mut by_id: HashMap<u128, usize> = HashMap::new();
+        let mut delta: Vec<MemoryCapsule> = Vec::new();
+        let mut tombstones: HashSet<u128> = HashSet::new();
+        let (mut inserts, mut deletes) = (0u64, 0u64);
         for op in crate::wal::Wal::replay(&wal_path)? {
             match op {
                 crate::wal::WalOp::Insert { capsule } => {
-                    store.insert_json(&capsule)?;
+                    let capsule = crate::compiler::capsule_from_json(&capsule)?;
+                    let id = capsule.capsule_id;
+                    tombstones.remove(&id);
+                    match by_id.get(&id) {
+                        Some(&pos) => delta[pos] = capsule,
+                        None => {
+                            by_id.insert(id, delta.len());
+                            delta.push(capsule);
+                        }
+                    }
+                    inserts += 1;
                 }
                 crate::wal::WalOp::Delete { id } => {
                     let id = crate::compiler::parse_u128(&id)?;
-                    store.delete(id)?;
+                    // Tombstone hides base-segment capsules too; drop any live delta
+                    // version by orphaning its slot (removed from the canonical map).
+                    by_id.remove(&id);
+                    tombstones.insert(id);
+                    deletes += 1;
                 }
             }
         }
+        // Keep only canonical slots: a slot survives iff `by_id` still points at it.
+        // Deleted ids were removed from the map; a reinserted id points at its newer
+        // slot, orphaning the older one.
+        let mut live_delta = Vec::with_capacity(by_id.len());
+        for (pos, capsule) in delta.into_iter().enumerate() {
+            if by_id.get(&capsule.capsule_id) == Some(&pos) {
+                live_delta.push(capsule);
+            }
+        }
+        store.delta = live_delta;
+        store.tombstones = tombstones;
+        for _ in 0..inserts {
+            store.metrics.record_insert();
+        }
+        for _ in 0..deletes {
+            store.metrics.record_delete();
+        }
+        store.rebuild_delta()?;
         store.wal = Some(crate::wal::Wal::open(&wal_path)?);
         Ok(store)
     }
@@ -234,6 +276,19 @@ impl MemoryStore {
             self.metrics.record_insert();
         }
         self.rebuild_delta()
+    }
+
+    /// Batch ingest from JSON, rebuilding the delta index once. Prefer this over
+    /// repeated `insert_json` for bulk loads.
+    pub fn insert_many_json<'a, I>(&mut self, values: I) -> Result<()>
+    where
+        I: IntoIterator<Item = &'a serde_json::Value>,
+    {
+        let capsules = values
+            .into_iter()
+            .map(crate::compiler::capsule_from_json)
+            .collect::<Result<Vec<_>>>()?;
+        self.insert_many(capsules)
     }
 
     /// Hide a capsule id from all future results (delete / supersede).

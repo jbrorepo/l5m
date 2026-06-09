@@ -90,6 +90,65 @@ fn checkpoint_persists_and_truncates_wal() -> Result<()> {
 }
 
 #[test]
+fn batch_replay_preserves_last_writer_wins_and_reinsert() -> Result<()> {
+    // The fast (single-rebuild) replay must produce the same logical state as
+    // applying each op in order: updates replace in place, delete-then-reinsert
+    // resurrects, and a plain delete stays hidden.
+    let dir = tempdir()?;
+    let wal = dir.path().join("l5m.wal");
+
+    {
+        let mut store = MemoryStore::open_durable(Vec::<&str>::new(), &wal)?;
+        store.insert_json(&memory("1", "first version amber"))?;
+        store.insert_json(&memory("1", "second version amber"))?; // update in place
+        store.insert_json(&memory("2", "doomed driftwood"))?;
+        store.delete(2)?; // plain delete -> stays gone
+        store.insert_json(&memory("3", "transient cobalt"))?;
+        store.delete(3)?;
+        store.insert_json(&memory("3", "resurrected cobalt"))?; // reinsert after delete
+    }
+
+    let store = MemoryStore::open_durable(Vec::<&str>::new(), &wal)?;
+    // Update won: only the second version is present.
+    assert!(finds(&store, "second version", "second version amber")?);
+    assert!(!finds(&store, "first version", "first version amber")?);
+    // Plain delete stayed hidden.
+    assert!(!finds(&store, "doomed driftwood", "driftwood")?);
+    // Reinsert resurrected the id with its newest claim.
+    assert!(finds(&store, "resurrected cobalt", "resurrected cobalt")?);
+    assert!(!finds(&store, "transient cobalt", "transient cobalt")?);
+    // Exactly one live capsule per surviving id (no duplicate delta slots).
+    assert_eq!(store.delta_len(), 2, "ids 1 and 3 live; 2 deleted");
+    Ok(())
+}
+
+#[test]
+fn large_wal_replay_is_correct() -> Result<()> {
+    // Exercises the single-pass fold on a non-trivial log (the old per-op rebuild
+    // was O(N^2)); here we just assert correctness at size.
+    let dir = tempdir()?;
+    let wal = dir.path().join("l5m.wal");
+    {
+        let mut store = MemoryStore::open_durable(Vec::<&str>::new(), &wal)?;
+        for i in 0..2000u64 {
+            store.insert_json(&memory(
+                &i.to_string(),
+                &format!("memory number {i} kelpstone"),
+            ))?;
+        }
+        // Delete the even ids.
+        for i in (0..2000u64).step_by(2) {
+            store.delete(i as u128)?;
+        }
+    }
+    let store = MemoryStore::open_durable(Vec::<&str>::new(), &wal)?;
+    assert_eq!(store.delta_len(), 1000, "odd ids survive");
+    assert!(finds(&store, "memory number 777", "number 777 kelpstone")?);
+    assert!(!finds(&store, "memory number 778", "number 778 kelpstone")?);
+    Ok(())
+}
+
+#[test]
 fn crash_after_checkpoint_before_truncate_is_consistent() -> Result<()> {
     // Simulate the dangerous window: checkpoint written, but WAL still holds the
     // ops (as if we crashed before truncation). Replaying on top must converge.

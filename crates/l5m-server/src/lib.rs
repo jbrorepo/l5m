@@ -5,6 +5,7 @@
 //! request body — so the gates always run under an authenticated identity.
 
 pub mod principal;
+pub mod ratelimit;
 
 use std::sync::Arc;
 
@@ -22,9 +23,12 @@ use l5m_core::{verify_audit_chain, AuditLog, MemoryStore, QueryRequest, Retrieva
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{Mutex, RwLock};
-use tower_http::trace::TraceLayer;
+use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 
-use principal::{AuthError, PrincipalProvider};
+use principal::{AuthError, Principal, PrincipalProvider};
+
+/// Maximum request body size (DoS guard); override with L5M_MAX_BODY_BYTES.
+pub const DEFAULT_MAX_BODY_BYTES: usize = 1 << 20; // 1 MiB
 
 /// Optional access-audit sink: a hash-chained log of every disclosure.
 pub struct AuditSink {
@@ -36,9 +40,27 @@ pub struct AppState {
     pub store: RwLock<MemoryStore>,
     pub principal: Arc<dyn PrincipalProvider>,
     pub audit: Option<AuditSink>,
+    /// Optional per-tenant rate limiter.
+    pub rate_limiter: Option<RateLimiter>,
+    /// Max request body size in bytes.
+    pub max_body_bytes: usize,
+}
+
+impl AppState {
+    /// Resolve + authorize the caller: principal, then per-tenant rate limit.
+    fn authorize(&self, headers: &HeaderMap) -> Result<Principal, ApiError> {
+        let principal = self.principal.principal(headers)?;
+        if let Some(limiter) = &self.rate_limiter {
+            if !limiter.allow(principal.tenant_id) {
+                return Err(ApiError::too_many());
+            }
+        }
+        Ok(principal)
+    }
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    let max_body = state.max_body_bytes;
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(|| async { "ready" }))
@@ -47,6 +69,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/memories", post(insert))
         .route("/v1/memories/:id", axum::routing::delete(delete_memory))
         .route("/v1/audit/verify", get(audit_verify))
+        .layer(RequestBodyLimitLayer::new(max_body))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -108,7 +131,7 @@ async fn query(
     headers: HeaderMap,
     Json(body): Json<QueryBody>,
 ) -> Result<Response, ApiError> {
-    let principal = state.principal.principal(&headers)?;
+    let principal = state.authorize(&headers)?;
     let request = QueryRequest {
         query: body.query,
         tenant_id: principal.tenant_id,
@@ -149,7 +172,7 @@ async fn insert(
     headers: HeaderMap,
     Json(mut capsule): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let principal = state.principal.principal(&headers)?;
+    let principal = state.authorize(&headers)?;
     // Enforce tenant ownership: a caller may only write into its own tenant,
     // regardless of what the body claims.
     capsule["tenant_id"] = json!(principal.tenant_id);
@@ -167,7 +190,7 @@ async fn delete_memory(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let _principal = state.principal.principal(&headers)?;
+    let _principal = state.authorize(&headers)?;
     let id: u128 = id
         .parse()
         .map_err(|_| ApiError::bad_request("capsule id must be an integer".to_string()))?;
@@ -208,6 +231,12 @@ impl ApiError {
             message,
         }
     }
+    fn too_many() -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: "rate limit exceeded".to_string(),
+        }
+    }
 }
 
 impl From<AuthError> for ApiError {
@@ -229,4 +258,5 @@ impl IntoResponse for ApiError {
 
 // Re-export so `main` and tests can construct a provider.
 pub use principal::{HeaderPrincipalProvider, JwtPrincipalProvider};
+pub use ratelimit::RateLimiter;
 pub type SharedState = Arc<AppState>;

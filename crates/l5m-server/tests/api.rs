@@ -12,16 +12,25 @@ use tokio::sync::RwLock;
 use tower::ServiceExt; // oneshot
 
 fn app() -> axum::Router {
-    app_with_audit(None)
+    app_full(None, None)
 }
 
 fn app_with_audit(audit: Option<l5m_server::AuditSink>) -> axum::Router {
+    app_full(audit, None)
+}
+
+fn app_full(
+    audit: Option<l5m_server::AuditSink>,
+    rate_limiter: Option<l5m_server::RateLimiter>,
+) -> axum::Router {
     let state = Arc::new(AppState {
         store: RwLock::new(MemoryStore::empty()),
         principal: Arc::new(HeaderPrincipalProvider {
             api_key: Some("secret".to_string()),
         }),
         audit,
+        rate_limiter,
+        max_body_bytes: l5m_server::DEFAULT_MAX_BODY_BYTES,
     });
     build_router(state)
 }
@@ -233,4 +242,34 @@ async fn queries_are_audited_and_chain_verifies() {
     let v = body_json(resp).await;
     assert_eq!(v["intact"], true);
     assert_eq!(v["verified"], 2, "two queries should be audited");
+}
+
+#[tokio::test]
+async fn rate_limiter_returns_429_when_exceeded() {
+    // burst of 2, slow refill -> the 3rd immediate query is throttled.
+    let app = app_full(None, Some(l5m_server::RateLimiter::new(0.1, 2.0)));
+    let s1 = app
+        .clone()
+        .oneshot(query_req(1, "q"))
+        .await
+        .unwrap()
+        .status();
+    let s2 = app
+        .clone()
+        .oneshot(query_req(1, "q"))
+        .await
+        .unwrap()
+        .status();
+    let s3 = app
+        .clone()
+        .oneshot(query_req(1, "q"))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(s1, StatusCode::OK);
+    assert_eq!(s2, StatusCode::OK);
+    assert_eq!(s3, StatusCode::TOO_MANY_REQUESTS, "3rd request throttled");
+    // A different tenant has its own bucket.
+    let s_other = app.oneshot(query_req(2, "q")).await.unwrap().status();
+    assert_eq!(s_other, StatusCode::OK, "other tenant unaffected");
 }

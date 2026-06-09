@@ -81,10 +81,28 @@ async fn main() {
             Arc::new(HeaderPrincipalProvider { api_key })
         };
 
+    // Optional per-tenant rate limiting + request body cap.
+    let rate_limiter = std::env::var("L5M_RATE_PER_SEC")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(|rate| {
+            let burst = std::env::var("L5M_RATE_BURST")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(rate.max(1.0));
+            l5m_server::RateLimiter::new(rate, burst)
+        });
+    let max_body_bytes = std::env::var("L5M_MAX_BODY_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(l5m_server::DEFAULT_MAX_BODY_BYTES);
+
     let state = Arc::new(AppState {
         store: RwLock::new(store),
         principal,
         audit,
+        rate_limiter,
+        max_body_bytes,
     });
 
     let app = build_router(state);
