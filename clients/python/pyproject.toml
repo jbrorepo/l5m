@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "l5m"
+version = "0.1.0"
+description = "Python client for the L5M security-gated memory server"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT OR Apache-2.0" }
+keywords = ["memory", "retrieval", "rag", "security", "multi-tenant"]
+authors = [{ name = "L5M" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = []  # stdlib only — no third-party supply chain to vet
+
+[project.urls]
+Repository = "https://github.com/jbrorepo/l5m"
+
+[tool.hatch.build.targets.wheel]
+packages = ["l5m"]
