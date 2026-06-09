@@ -96,6 +96,10 @@ pub struct SegmentMetadata {
 /// only the (bounded) active segment, never the whole delta.
 pub const DEFAULT_DELTA_SEAL_THRESHOLD: usize = 1024;
 
+/// Default number of sealed runs that triggers an automatic minor compaction,
+/// bounding per-query segment fan-out on a long-running store.
+pub const DEFAULT_AUTO_COMPACT_RUNS: usize = 16;
+
 pub struct MemoryStore {
     segments: Vec<LoadedSegment>,
     /// Active, in-RAM write buffer of the most recent ingests/updates. Bounded by
@@ -111,6 +115,10 @@ pub struct MemoryStore {
     sealed_deltas: Vec<Segment>,
     /// Seal the active buffer into a `sealed_deltas` run once it reaches this size.
     seal_threshold: usize,
+    /// When `Some(n)`, automatically run a minor compaction once `n` sealed runs
+    /// have accumulated, keeping per-query segment fan-out bounded. `None`
+    /// disables automatic compaction (callers drive `compact`/`compact_delta`).
+    auto_compact_runs: Option<usize>,
     /// Capsule ids hidden from results (deletes / supersessions).
     tombstones: HashSet<u128>,
     next_epoch: u64,
@@ -151,6 +159,7 @@ impl MemoryStore {
             delta_segment: None,
             sealed_deltas: Vec::new(),
             seal_threshold: DEFAULT_DELTA_SEAL_THRESHOLD,
+            auto_compact_runs: Some(DEFAULT_AUTO_COMPACT_RUNS),
             tombstones: HashSet::new(),
             next_epoch,
             metrics: crate::metrics::Metrics::new(),
@@ -167,6 +176,7 @@ impl MemoryStore {
             delta_segment: None,
             sealed_deltas: Vec::new(),
             seal_threshold: DEFAULT_DELTA_SEAL_THRESHOLD,
+            auto_compact_runs: Some(DEFAULT_AUTO_COMPACT_RUNS),
             tombstones: HashSet::new(),
             next_epoch: 1,
             metrics: crate::metrics::Metrics::new(),
@@ -179,6 +189,14 @@ impl MemoryStore {
     /// a larger one seals rarely (fewer runs, larger per-seal cost).
     pub fn with_seal_threshold(mut self, threshold: usize) -> Self {
         self.seal_threshold = threshold.max(1);
+        self
+    }
+
+    /// Configure automatic minor compaction. `Some(n)` consolidates the delta
+    /// once `n` sealed runs accumulate (bounding query fan-out); `None` disables
+    /// it so the caller drives `compact`/`compact_delta` explicitly.
+    pub fn with_auto_compaction(mut self, runs: Option<usize>) -> Self {
+        self.auto_compact_runs = runs.map(|n| n.max(1));
         self
     }
 
@@ -274,7 +292,8 @@ impl MemoryStore {
         self.wal_append(&op)?;
         self.push_into_buffer(capsule);
         self.metrics.record_insert();
-        self.seal_or_reindex()
+        self.seal_or_reindex()?;
+        self.maybe_auto_compact()
     }
 
     /// Ingest from the same JSON shape `compile_segment` accepts.
@@ -297,6 +316,7 @@ impl MemoryStore {
             self.metrics.record_insert();
             if self.delta.len() >= self.seal_threshold {
                 self.seal_active_buffer()?;
+                self.maybe_auto_compact()?;
             }
         }
         self.rebuild_active_segment()
@@ -382,10 +402,11 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Collect every live capsule (newest version per id wins, tombstoned ids
-    /// dropped) across the active buffer, the sealed runs, and the base segments.
-    /// Recency order: active buffer → sealed runs newest-first → base.
-    fn collect_live_capsules(&self) -> Vec<MemoryCapsule> {
+    /// Collect live capsules (newest version per id wins, tombstoned ids dropped)
+    /// across the active buffer and sealed runs, and — when `include_base` — the
+    /// base segments. Recency order: active buffer → sealed runs newest-first →
+    /// base, so the freshest copy of any id is the one kept.
+    fn collect_live(&self, include_base: bool) -> Vec<MemoryCapsule> {
         let mut live: Vec<MemoryCapsule> = Vec::new();
         let mut seen: HashSet<u128> = HashSet::new();
         let mut take = |capsule: &MemoryCapsule| {
@@ -401,9 +422,11 @@ impl MemoryStore {
                 take(capsule);
             }
         }
-        for loaded in &self.segments {
-            for capsule in loaded.segment.capsules() {
-                take(capsule);
+        if include_base {
+            for loaded in &self.segments {
+                for capsule in loaded.segment.capsules() {
+                    take(capsule);
+                }
             }
         }
         live
@@ -423,7 +446,7 @@ impl MemoryStore {
     /// version winning on id collisions) and clear the delta. Keeps the delta
     /// small (LSM-style).
     pub fn compact(&mut self) -> Result<()> {
-        let live = self.collect_live_capsules();
+        let live = self.collect_live(true);
         let compacted = Segment::from_capsules(live, self.next_epoch)?;
         self.segments = vec![LoadedSegment {
             path: None,
@@ -442,7 +465,7 @@ impl MemoryStore {
     /// `open_durable([checkpoint], wal_path)`.
     pub fn compact_to(&mut self, checkpoint: impl AsRef<Path>) -> Result<()> {
         let checkpoint = checkpoint.as_ref();
-        let live = self.collect_live_capsules();
+        let live = self.collect_live(true);
         // 1) Durably write the checkpoint segment.
         crate::compiler::compile_capsules(checkpoint, live, self.next_epoch)?;
         // 2) Adopt it as the sole base.
@@ -455,6 +478,41 @@ impl MemoryStore {
         // 3) Only now is it safe to drop the WAL history.
         if let Some(wal) = self.wal.as_mut() {
             wal.truncate()?;
+        }
+        Ok(())
+    }
+
+    /// Minor compaction: merge the active buffer + all sealed runs into a single
+    /// sealed run, **without touching the base**. This bounds per-query segment
+    /// fan-out (the cost that grows as runs accumulate) at O(delta) cost rather
+    /// than the O(base + delta) of a full `compact`. Tombstones are retained so
+    /// base copies of deleted ids stay hidden; the base is untouched, so the
+    /// merged run stays "newer than base" and still wins on id collisions.
+    pub fn compact_delta(&mut self) -> Result<()> {
+        // Nothing to consolidate unless there are at least two delta segments
+        // (sealed runs and/or the active buffer) to merge.
+        if self.sealed_deltas.is_empty() {
+            return Ok(());
+        }
+        let live = self.collect_live(false);
+        self.delta.clear();
+        self.delta_segment = None;
+        self.sealed_deltas = if live.is_empty() {
+            Vec::new()
+        } else {
+            vec![Segment::from_capsules(live, self.next_epoch)?]
+        };
+        self.next_epoch += 1;
+        Ok(())
+    }
+
+    /// If automatic compaction is enabled and the sealed-run count has reached the
+    /// configured threshold, run a minor compaction to bound query fan-out.
+    fn maybe_auto_compact(&mut self) -> Result<()> {
+        if let Some(threshold) = self.auto_compact_runs {
+            if self.sealed_deltas.len() >= threshold {
+                self.compact_delta()?;
+            }
         }
         Ok(())
     }

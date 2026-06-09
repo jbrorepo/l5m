@@ -200,6 +200,57 @@ fn update_and_reinsert_win_across_seal_boundaries() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn auto_compaction_bounds_sealed_run_fan_out() -> Result<()> {
+    // Tiny seal threshold + low auto-compact trigger: many writes must NOT let
+    // sealed runs grow without bound — minor compaction keeps fan-out in check.
+    let mut store = MemoryStore::empty()
+        .with_seal_threshold(4)
+        .with_auto_compaction(Some(3));
+    for i in 0..200u64 {
+        store.insert_json(&memory(&i.to_string(), 1, &format!("vortex{i} datum"), 8))?;
+    }
+    // Without auto-compaction this would be ~50 runs; the trigger holds it low.
+    assert!(
+        store.sealed_run_count() <= 3,
+        "sealed runs bounded, got {}",
+        store.sealed_run_count()
+    );
+    // All data across the consolidated runs remains correct + gated.
+    assert!(found(&store, "vortex0", 1, "vortex0 ")?);
+    assert!(found(&store, "vortex123", 1, "vortex123 ")?);
+    assert!(found(&store, "vortex199", 1, "vortex199 ")?);
+    assert!(
+        !found(&store, "vortex0", 2, "vortex0")?,
+        "tenant isolation holds"
+    );
+    Ok(())
+}
+
+#[test]
+fn minor_compaction_preserves_deletes_and_newest_wins() -> Result<()> {
+    // Drive minor compaction explicitly (auto disabled) and check it keeps
+    // tombstones (base/sealed copies stay hidden) and newest-tier-wins.
+    let mut store = MemoryStore::empty()
+        .with_seal_threshold(2)
+        .with_auto_compaction(None);
+    store.insert_json(&memory("1", 1, "comet original tail", 8))?;
+    store.insert_json(&memory("2", 1, "asteroid belt rocky", 8))?;
+    store.insert_json(&memory("3", 1, "meteor shower bright", 8))?; // forces seals
+    store.insert_json(&memory("1", 1, "comet restored tail", 8))?; // update id 1
+    store.delete(2)?; // tombstone id 2
+    assert!(store.sealed_run_count() >= 1);
+
+    store.compact_delta()?;
+    assert!(store.sealed_run_count() <= 1, "runs consolidated");
+    // Update won, delete held, others intact — all after a minor compaction.
+    assert!(found(&store, "comet", 1, "restored")?, "newest wins");
+    assert!(!found(&store, "comet", 1, "original")?, "stale suppressed");
+    assert!(!found(&store, "asteroid", 1, "asteroid")?, "delete held");
+    assert!(found(&store, "meteor", 1, "meteor shower")?);
+    Ok(())
+}
+
 // Real proof of the incremental-delta win. Run with:
 //   cargo test -p l5m-core --release --test mutable_store -- --ignored --nocapture
 // A bounded active buffer makes inserts amortized O(1); an effectively-unbounded

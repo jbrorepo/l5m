@@ -6,6 +6,9 @@
 //!   L5M_SEGMENTS comma-separated segment paths to load (optional; empty = start
 //!                from a pure real-time store)
 //!   L5M_API_KEY  if set, require a matching `X-L5M-Api-Key` header
+//!   L5M_DELTA_SEAL_THRESHOLD  active write-buffer size before sealing a run
+//!   L5M_AUTO_COMPACT_RUNS     sealed-run count that triggers minor compaction
+//!                             (0 disables automatic compaction)
 
 use std::sync::Arc;
 
@@ -38,6 +41,24 @@ async fn main() {
             }
         }
         _ => MemoryStore::empty(),
+    };
+    // Tune the real-time delta: L5M_DELTA_SEAL_THRESHOLD bounds the active write
+    // buffer; L5M_AUTO_COMPACT_RUNS bounds query fan-out (set 0 to disable
+    // automatic minor compaction).
+    let store = match std::env::var("L5M_DELTA_SEAL_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        Some(n) => store.with_seal_threshold(n),
+        None => store,
+    };
+    let store = match std::env::var("L5M_AUTO_COMPACT_RUNS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        Some(0) => store.with_auto_compaction(None),
+        Some(n) => store.with_auto_compaction(Some(n)),
+        None => store,
     };
 
     // Optional tamper-evident access audit log.
