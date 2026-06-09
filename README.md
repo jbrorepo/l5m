@@ -59,6 +59,20 @@ Full method, CIs, and honest caveats: [`SCORE_ANALYSIS.md`](SCORE_ANALYSIS.md).
 
 Get from zero to your first query in under 5 minutes.
 
+### Give your AI agent memory (MCP — fastest path)
+
+L5M ships an [MCP server](crates/l5m-mcp/) that plugs into Claude Desktop,
+Claude Code, ChatGPT, or any MCP host — durable `remember`/`recall`/`forget`
+with the security principal bound by the host, not the agent:
+
+```bash
+cargo install --path crates/l5m-mcp
+claude mcp add l5m-memory -e L5M_DATA_DIR=~/.l5m -- l5m-mcp
+```
+
+See [crates/l5m-mcp/README.md](crates/l5m-mcp/README.md) for Claude Desktop
+config and the multi-agent isolation pattern.
+
 ### Install
 
 ```bash
@@ -297,20 +311,28 @@ See [examples/](examples/) for complete runnable examples:
 - ✅ High-throughput query workloads
 
 **L5M may not be ideal for:**
-- ❌ Semantic search requiring learned embeddings (use hybrid with reranker)
-- ❌ Real-time memory updates (segments are immutable)
-- ❌ Distributed systems (designed for local deployment)
+- ❌ Pure semantic search with no security/tenancy requirements (a plain vector DB is simpler)
+- ❌ Multi-node distributed deployments (single-node today; immutable segments make replication straightforward — on the roadmap)
 
 ---
 
 ## Production Features
 
-- **Observability**: Structured logging, metrics export, detailed timing breakdowns
-- **Error Handling**: Typed errors, graceful degradation, validation
-- **Configuration**: JSON files, environment variables, per-query overrides
-- **Health Checks**: Segment integrity validation, fast liveness checks
-- **Stdio Agent**: Language-agnostic integration via JSON protocol
-- **Batch Queries**: Amortize loading overhead across multiple queries
+- **Real-time writes**: LSM delta layer — amortized O(1) inserts, WAL durability
+  (acknowledged writes survive crashes), automatic compaction
+- **Time-travel recall**: bi-temporal capsules (`valid_from`/`valid_until`/`observed_at`)
+  with `as_of` point-in-time queries and supersession — ask "what did we believe then?"
+- **Encryption at rest**: ChaCha20-Poly1305 sealed segments with pluggable key providers
+- **Tamper-evident audit**: hash-chained access log with `verify` endpoint
+- **AuthN**: JWT (HS256/RS256) or API key; principal resolved from verified
+  credentials, never from the request body
+- **Abuse resistance**: per-tenant token-bucket rate limiting, request body caps
+- **Observability**: Prometheus metrics, structured JSON logs, health/readiness probes
+- **MCP server**: [`l5m-mcp`](crates/l5m-mcp/) — security-gated memory for Claude,
+  ChatGPT, Copilot, and any MCP host, with the principal bound at startup
+- **Python SDK**: [`clients/python`](clients/python/) — dependency-free client
+- **Supply chain**: signed releases (cosign/Sigstore) + CycloneDX/SPDX SBOM,
+  `cargo-deny`, continuous fuzzing
 
 See [docs/segment-format.md](docs/segment-format.md) for the on-disk format and
 [docs/security-model.md](docs/security-model.md) for the security model.
@@ -369,25 +391,32 @@ docker run -v $(pwd)/data:/data jbrorepo/l5m query --segment /data/demo.segment 
 
 ## Roadmap
 
-**Near-term (Q2 2026):**
-- [ ] Python SDK with pip installation
-- [ ] Optional learned embeddings (hybrid mode)
+**Shipped:**
+- [x] Real-time writes (LSM delta, WAL durability, automatic compaction)
+- [x] Optional learned embeddings (hybrid lexical ⊕ dense with RRF)
+- [x] Gate-filtered dense ANN
+- [x] Encryption at rest (sealed segments)
+- [x] Tamper-evident audit log
+- [x] HTTP server with JWT auth, rate limiting, Prometheus metrics
+- [x] Python SDK (dependency-free)
+- [x] MCP server (`l5m-mcp`) — memory for Claude/ChatGPT/Copilot agents
+- [x] Signed releases + SBOM (cosign/Sigstore)
+- [x] Continuous fuzzing (in-tree + cargo-fuzz in CI)
+
+**Next:**
+- [ ] OpenAPI spec + TypeScript SDK
+- [ ] Scoped API keys + JWKS key rotation for OIDC
+- [ ] Per-tenant usage metrics (metering)
+- [ ] Memory-extraction pipeline (transcript → capsules, offline)
+- [ ] Admin/ops API (checkpoint, compaction, tenant stats, audit export)
+
+**Later:**
+- [ ] Read replicas via immutable-segment shipping (HA)
 - [ ] SIMD-optimized scoring
-- [ ] Segment format v2 with compression
-
-**Medium-term (Q3 2026):**
-- [ ] Native LLM probe head
-- [ ] KV capsule support
-- [ ] Multi-hop relation traversal
-- [ ] Signed manifests and encryption
-
-**Long-term (Q4 2026+):**
-- [ ] Distributed segment federation
-- [ ] Real-time segment updates
 - [ ] Advanced policy expression language
-- [ ] Model-server integration
+- [ ] Multi-hop relation traversal
 
-See [ROADMAP.md](ROADMAP.md) for details. Community input welcome!
+Community input welcome!
 
 ---
 

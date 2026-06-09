@@ -1,0 +1,18 @@
+[package]
+name = "l5m-mcp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP (Model Context Protocol) server exposing L5M security-gated memory to AI agents"
+
+[[bin]]
+name = "l5m-mcp"
+path = "src/main.rs"
+
+[dependencies]
+l5m-core = { path = "../l5m-core" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

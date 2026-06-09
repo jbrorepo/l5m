@@ -704,6 +704,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "l5m-mcp"
+version = "0.1.0"
+dependencies = [
+ "l5m-core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "l5m-server"
 version = "0.1.0"
 dependencies = [

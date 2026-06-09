@@ -5,13 +5,14 @@ members = [
     "crates/l5m-bench",
     "crates/l5m-benchmarks",
     "crates/l5m-server",
+    "crates/l5m-mcp",
 ]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/l5m"
+repository = "https://github.com/jbrorepo/l5m"
 
 [workspace.dependencies]
 blake3 = "1.5"

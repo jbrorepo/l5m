@@ -5,6 +5,17 @@ All notable changes to L5M are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Integrations
+- **MCP server** (`l5m-mcp` crate): security-gated memory for any MCP host
+  (Claude Desktop/Code, ChatGPT, Copilot, custom agents) over stdio JSON-RPC.
+  Tools: `remember` / `recall` (with point-in-time `as_of`) / `forget`. The
+  principal (tenant/context/policy/trust floor) is bound **once at process
+  start** from host configuration — tool arguments cannot name a tenant or
+  widen a mask, so even a prompt-injected agent stays inside its granted memory
+  slice. Durable by default (WAL-backed `L5M_DATA_DIR`). Dependencies:
+  `l5m-core` + `serde_json` only (no MCP SDK, no async runtime). Protocol +
+  security tests, including hostile-argument and cross-tenant recall attempts.
+
 ### Enterprise
 - **JWT/OIDC authentication** for the server: a `JwtPrincipalProvider` derives
   the principal from a cryptographically verified `Authorization: Bearer` token

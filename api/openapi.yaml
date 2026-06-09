@@ -1,0 +1,224 @@
+openapi: 3.0.3
+info:
+  title: L5M — security-gated memory API
+  version: 0.1.0
+  description: |
+    HTTP API for the L5M memory server. All authorization gates (tenant,
+    context, policy, trust, temporal) are enforced **before** relevance
+    scoring: a memory the caller is not entitled to is never a retrieval
+    candidate. The principal is resolved from credentials (JWT claims or
+    API key + headers) — never from the request body.
+  license:
+    name: MIT OR Apache-2.0
+servers:
+  - url: http://localhost:8080
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Production auth. The principal (tenant/context/policy/trust) is derived
+        from cryptographically verified claims: `tenant` (required), `context`,
+        `policy` (hex masks), `trust` (0-10).
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-L5M-Api-Key
+      description: |
+        Development / trusted-network auth. Used together with the principal
+        headers `X-L5M-Tenant` (required), `X-L5M-Context`, `X-L5M-Policy`
+        (hex masks, default 0xffff), and `X-L5M-Trust` (default 0).
+
+  schemas:
+    QueryRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Natural-language query text.
+        max_capsules:
+          type: integer
+          default: 8
+          description: Maximum memories to return.
+        as_of:
+          type: integer
+          format: int64
+          description: |
+            Point-in-time recall (unix seconds). Only memories whose validity
+            window contains this instant are candidates. Omit for "now/all".
+        mode:
+          type: string
+          enum: [l5m, parent-aggregate, hybrid, rrf-parent]
+          description: Retrieval mode (default l5m).
+        embedding:
+          type: array
+          items: { type: number, format: float }
+          description: |
+            Optional dense query embedding (computed offline) enabling hybrid
+            lexical + dense ranking. Gates still run first.
+    Capsule:
+      type: object
+      required:
+        [capsule_id, claim, evidence, source_id, valid_from, observed_at,
+         last_verified_at, context_mask, policy_mask, trust_level,
+         classification, poison_risk]
+      properties:
+        capsule_id: { type: string, description: Unique id (decimal u128 as string). }
+        tenant_id:
+          type: integer
+          format: int64
+          description: Ignored on write — the server forces the authenticated tenant.
+        claim: { type: string, description: The fact, stated plainly. }
+        evidence: { type: string, description: Source text supporting the claim. }
+        source_id: { type: integer, format: int64 }
+        source_uri: { type: string }
+        valid_from: { type: integer, format: int64, description: Unix seconds fact becomes valid. }
+        valid_until: { type: integer, format: int64, description: Unix seconds fact expires (omit = never). }
+        observed_at: { type: integer, format: int64 }
+        last_verified_at: { type: integer, format: int64 }
+        context_mask: { type: string, example: "0xffff", description: Hex bitmask; visible when (mask & caller_context) != 0. }
+        policy_mask: { type: string, example: "0xffff", description: Hex bitmask; visible when (mask & caller_policy) != 0. }
+        trust_level: { type: integer, minimum: 0, maximum: 10 }
+        classification: { type: integer }
+        poison_risk: { type: integer }
+        anchors: { type: array, items: { type: string } }
+        entities: { type: array, items: { type: string } }
+        embedding:
+          type: array
+          items: { type: number, format: float }
+          description: Optional precomputed dense embedding.
+    FrameCapsule:
+      type: object
+      properties:
+        capsule_id: { type: integer }
+        claim: { type: string }
+        evidence: { type: string }
+        trust_level: { type: integer }
+        valid_from: { type: integer, format: int64 }
+        valid_until: { type: integer, format: int64, nullable: true }
+        source_id: { type: integer, format: int64 }
+        source_hash:
+          type: array
+          items: { type: integer }
+          description: BLAKE3 source hash (32 bytes) — proof-bearing provenance.
+        score: { type: number, format: float }
+    QueryResponse:
+      type: object
+      properties:
+        frame:
+          type: object
+          properties:
+            epoch: { type: integer, format: int64 }
+            capsules:
+              type: array
+              items: { $ref: "#/components/schemas/FrameCapsule" }
+            conflicts:
+              type: array
+              items: { $ref: "#/components/schemas/FrameCapsule" }
+            coverage:
+              type: object
+              description: Gate/candidate statistics (how many memories passed each gate, candidates scored).
+        mode: { type: string }
+        segment_count: { type: integer }
+        total_retrieval_ns: { type: integer, format: int64 }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200": { description: Server is up }
+  /readyz:
+    get:
+      summary: Readiness probe
+      security: []
+      responses:
+        "200": { description: Server is ready }
+  /metrics:
+    get:
+      summary: Prometheus metrics (text exposition)
+      security: []
+      responses:
+        "200":
+          description: Metrics
+          content:
+            text/plain: {}
+  /v1/query:
+    post:
+      summary: Gated retrieval
+      description: |
+        Runs tenant → context → policy → trust → temporal gates on the
+        candidate set **before** any scoring, then ranks the survivors.
+        Supports point-in-time recall via `as_of`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QueryRequest" }
+      responses:
+        "200":
+          description: Proof-bearing memory frame
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryResponse" }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { description: Per-tenant rate limit exceeded, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/memories:
+    post:
+      summary: Insert or update a memory
+      description: |
+        Write is durably WAL-logged before it is acknowledged. Tenant ownership
+        is forced to the authenticated principal regardless of the body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Capsule" }
+      responses:
+        "201": { description: Inserted }
+        "400": { description: Invalid capsule, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Unauthorized }
+        "429": { description: Rate limited }
+  /v1/memories/{id}:
+    delete:
+      summary: Delete (tombstone) a memory by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Capsule id (decimal integer string).
+      responses:
+        "200": { description: Deleted }
+        "400": { description: Invalid id }
+        "401": { description: Unauthorized }
+  /v1/audit/verify:
+    get:
+      summary: Verify the tamper-evident audit chain
+      description: |
+        Recomputes the hash chain over the access-audit log. Any edit,
+        deletion, or reorder breaks verification.
+      responses:
+        "200":
+          description: Chain status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intact: { type: boolean }
+                  verified: { type: integer, description: Number of records verified }
+        "404": { description: Audit log not enabled }

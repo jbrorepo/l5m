@@ -55,7 +55,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} -p l5m-cli -p l5m-server
+        run: cargo build --release --target ${{ matrix.target }} -p l5m-cli -p l5m-server -p l5m-mcp
 
       - name: Package + checksums
         shell: bash
@@ -66,6 +66,7 @@ jobs:
           bin_dir="target/${{ matrix.target }}/release"
           cp "$bin_dir/l5m${{ matrix.ext }}" "$dist/"
           cp "$bin_dir/l5m-server${{ matrix.ext }}" "$dist/"
+          cp "$bin_dir/l5m-mcp${{ matrix.ext }}" "$dist/"
           cp README.md LICENSE-MIT LICENSE-APACHE SECURITY.md "$dist/" 2>/dev/null || true
           if [ "${{ matrix.archive }}" = "zip" ]; then
             7z a "${dist}.zip" "$dist" >/dev/null
