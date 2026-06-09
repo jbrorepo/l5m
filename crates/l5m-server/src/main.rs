@@ -40,9 +40,51 @@ async fn main() {
         _ => MemoryStore::empty(),
     };
 
+    // Optional tamper-evident access audit log.
+    let audit = match std::env::var("L5M_AUDIT_LOG") {
+        Ok(path) if !path.trim().is_empty() => match l5m_core::AuditLog::open(&path) {
+            Ok(log) => Some(l5m_server::AuditSink {
+                log: tokio::sync::Mutex::new(log),
+                path: path.into(),
+            }),
+            Err(err) => {
+                tracing::error!(%err, "failed to open audit log");
+                std::process::exit(1);
+            }
+        },
+        _ => None,
+    };
+
+    // Principal resolution: prefer a verified JWT in production; fall back to the
+    // header/API-key provider for dev / trusted networks.
+    let principal: Arc<dyn l5m_server::principal::PrincipalProvider> =
+        if let Ok(secret) = std::env::var("L5M_JWT_HS256_SECRET") {
+            tracing::info!("auth: JWT HS256");
+            Arc::new(l5m_server::JwtPrincipalProvider::hs256(secret.as_bytes()))
+        } else if let Ok(pem_path) = std::env::var("L5M_JWT_RS256_PEM_FILE") {
+            match std::fs::read(&pem_path)
+                .map_err(|e| e.to_string())
+                .and_then(|pem| {
+                    l5m_server::JwtPrincipalProvider::rs256_pem(&pem).map_err(|e| e.to_string())
+                }) {
+                Ok(provider) => {
+                    tracing::info!("auth: JWT RS256");
+                    Arc::new(provider)
+                }
+                Err(err) => {
+                    tracing::error!(%err, "failed to load RS256 public key");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            tracing::warn!("auth: header/API-key provider (use JWT in production)");
+            Arc::new(HeaderPrincipalProvider { api_key })
+        };
+
     let state = Arc::new(AppState {
         store: RwLock::new(store),
-        principal: Arc::new(HeaderPrincipalProvider { api_key }),
+        principal,
+        audit,
     });
 
     let app = build_router(state);

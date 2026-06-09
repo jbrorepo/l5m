@@ -20,7 +20,11 @@ Environment:
 - `L5M_BIND` — bind address (default `0.0.0.0:8080`)
 - `L5M_SEGMENTS` — comma-separated segment paths to load (optional; empty = pure
   real-time store)
-- `L5M_API_KEY` — if set, require a matching `X-L5M-Api-Key` header
+- `L5M_AUDIT_LOG` — path to a tamper-evident access audit log (optional)
+- **Auth** (first match wins):
+  - `L5M_JWT_HS256_SECRET` — verify `Authorization: Bearer` JWTs (HS256)
+  - `L5M_JWT_RS256_PEM_FILE` — verify JWTs with an RSA public key (RS256/OIDC)
+  - `L5M_API_KEY` — dev fallback: require a matching `X-L5M-Api-Key` header
 
 ## Endpoints
 
@@ -32,6 +36,7 @@ Environment:
 | POST | `/v1/query` | gated retrieval |
 | POST | `/v1/memories` | insert/update a memory (forced to the caller's tenant) |
 | DELETE | `/v1/memories/:id` | tombstone a memory |
+| GET | `/v1/audit/verify` | verify the audit chain (when `L5M_AUDIT_LOG` set) |
 
 Principal headers (dev `HeaderPrincipalProvider`): `X-L5M-Tenant` (required),
 `X-L5M-Context`/`X-L5M-Policy` (hex masks, default `0xffff`), `X-L5M-Trust`
@@ -54,8 +59,9 @@ curl -s localhost:8080/v1/query -H 'x-l5m-api-key: changeme' \
 
 ## Production note
 
-`HeaderPrincipalProvider` is for development / trusted networks. In production,
-implement `PrincipalProvider` against your IdP — verify a JWT/OIDC token and
-derive the tenant/policy/trust from its **verified** claims — so a client can
-never assert a tenant it isn't entitled to. L5M enforces; your provider
-authenticates.
+For production, use the **JWT provider** (`L5M_JWT_HS256_SECRET` or
+`L5M_JWT_RS256_PEM_FILE`): the principal is derived from a cryptographically
+verified token's claims (`tenant`, `context`, `policy`, `trust`), so a client
+can never assert a tenant it isn't entitled to. The `HeaderPrincipalProvider`
+(API key + `X-L5M-*`) is for development / trusted networks only. L5M enforces
+the gates; your provider authenticates the principal.

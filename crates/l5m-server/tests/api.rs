@@ -12,11 +12,16 @@ use tokio::sync::RwLock;
 use tower::ServiceExt; // oneshot
 
 fn app() -> axum::Router {
+    app_with_audit(None)
+}
+
+fn app_with_audit(audit: Option<l5m_server::AuditSink>) -> axum::Router {
     let state = Arc::new(AppState {
         store: RwLock::new(MemoryStore::empty()),
         principal: Arc::new(HeaderPrincipalProvider {
             api_key: Some("secret".to_string()),
         }),
+        audit,
     });
     build_router(state)
 }
@@ -184,4 +189,48 @@ async fn metrics_endpoint_exposes_prometheus() {
     let text = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(text.contains("l5m_queries_total"));
     assert!(text.contains("l5m_query_latency_seconds_bucket"));
+}
+
+#[tokio::test]
+async fn queries_are_audited_and_chain_verifies() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let sink = l5m_server::AuditSink {
+        log: tokio::sync::Mutex::new(l5m_core::AuditLog::open(&path).unwrap()),
+        path: path.clone(),
+    };
+    let app = app_with_audit(Some(sink));
+
+    // Insert + two queries -> two audit records.
+    let cap = serde_json::json!({
+        "capsule_id":"1","tenant_id":1,"claim":"audited kelpstone","evidence":"audited kelpstone",
+        "source_id":1,"valid_from":1,"observed_at":1,"last_verified_at":1,
+        "context_mask":"0xffff","policy_mask":"0xffff","trust_level":8,
+        "classification":1,"poison_risk":0
+    });
+    let _ = app.clone().oneshot(insert_req(1, cap)).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(query_req(1, "audited kelpstone"))
+        .await
+        .unwrap();
+    let _ = app
+        .clone()
+        .oneshot(query_req(1, "audited kelpstone"))
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/audit/verify")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp).await;
+    assert_eq!(v["intact"], true);
+    assert_eq!(v["verified"], 2, "two queries should be audited");
 }

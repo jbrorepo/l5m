@@ -15,17 +15,27 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use l5m_core::{MemoryStore, QueryRequest, RetrievalMode};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use l5m_core::{verify_audit_chain, AuditLog, MemoryStore, QueryRequest, RetrievalMode};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::trace::TraceLayer;
 
 use principal::{AuthError, PrincipalProvider};
 
+/// Optional access-audit sink: a hash-chained log of every disclosure.
+pub struct AuditSink {
+    pub log: Mutex<AuditLog>,
+    pub path: PathBuf,
+}
+
 pub struct AppState {
     pub store: RwLock<MemoryStore>,
     pub principal: Arc<dyn PrincipalProvider>,
+    pub audit: Option<AuditSink>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -36,8 +46,38 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/query", post(query))
         .route("/v1/memories", post(insert))
         .route("/v1/memories/:id", axum::routing::delete(delete_memory))
+        .route("/v1/audit/verify", get(audit_verify))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+async fn audit_verify(State(state): State<Arc<AppState>>) -> Response {
+    match &state.audit {
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "audit log not enabled"})),
+        )
+            .into_response(),
+        Some(audit) => match verify_audit_chain(&audit.path) {
+            Ok(verified) => (
+                StatusCode::OK,
+                Json(json!({"verified": verified, "intact": true})),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"intact": false, "error": e.to_string()})),
+            )
+                .into_response(),
+        },
+    }
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 async fn metrics(State(state): State<Arc<AppState>>) -> Response {
@@ -90,6 +130,17 @@ async fn query(
         .await
         .query(&request)
         .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    // Append a tamper-evident audit record of what was disclosed, if enabled.
+    if let Some(audit) = &state.audit {
+        if let Ok(probe) = request.to_probe() {
+            let _ = audit
+                .log
+                .lock()
+                .await
+                .record(&probe, &response.frame, now_unix());
+        }
+    }
     Ok(Json(response).into_response())
 }
 
@@ -176,6 +227,6 @@ impl IntoResponse for ApiError {
     }
 }
 
-// Re-export so `main` and tests can construct a default provider.
-pub use principal::HeaderPrincipalProvider;
+// Re-export so `main` and tests can construct a provider.
+pub use principal::{HeaderPrincipalProvider, JwtPrincipalProvider};
 pub type SharedState = Arc<AppState>;

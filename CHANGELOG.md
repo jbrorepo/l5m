@@ -6,6 +6,12 @@ All notable changes to L5M are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Enterprise
+- **JWT/OIDC authentication** for the server: a `JwtPrincipalProvider` derives
+  the principal from a cryptographically verified `Authorization: Bearer` token
+  (HS256 shared secret or RS256/OIDC public key), with signature + expiry checks.
+  Configure via `L5M_JWT_HS256_SECRET` / `L5M_JWT_RS256_PEM_FILE`.
+- **Audit wired into the server**: when `L5M_AUDIT_LOG` is set, every query emits
+  a tamper-evident record, and `GET /v1/audit/verify` confirms chain integrity.
 - **Durable real-time writes**: a write-ahead log (`wal.rs`) fsync'd per
   mutation so acknowledged inserts/deletes survive a crash/restart;
   `MemoryStore::open_durable` replays it; `compact_to` checkpoints the live state

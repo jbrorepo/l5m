@@ -71,3 +71,136 @@ impl PrincipalProvider for HeaderPrincipalProvider {
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|v| v.to_str().ok())
 }
+
+// ---------------------------------------------------------------------------
+// Production provider: derive the principal from a verified JWT.
+// ---------------------------------------------------------------------------
+
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct L5mClaims {
+    /// Tenant id (required). Everything else falls back to a safe default.
+    tenant: u64,
+    #[serde(default)]
+    context: Option<String>,
+    #[serde(default)]
+    policy: Option<String>,
+    #[serde(default)]
+    trust: Option<u8>,
+}
+
+/// Resolve the principal from a verified `Authorization: Bearer <jwt>`. The
+/// signature and expiry are checked cryptographically, so — unlike header-based
+/// auth — a client cannot assert a tenant it isn't entitled to. Map your IdP's
+/// claims onto `tenant`/`context`/`policy`/`trust` (e.g. via a token exchange).
+pub struct JwtPrincipalProvider {
+    decoding_key: DecodingKey,
+    validation: Validation,
+}
+
+impl JwtPrincipalProvider {
+    /// HMAC-SHA256 with a shared secret.
+    pub fn hs256(secret: &[u8]) -> Self {
+        Self {
+            decoding_key: DecodingKey::from_secret(secret),
+            validation: Validation::new(Algorithm::HS256),
+        }
+    }
+
+    /// RS256 with an RSA public key in PEM form (typical for OIDC providers).
+    pub fn rs256_pem(pem: &[u8]) -> Result<Self, jsonwebtoken::errors::Error> {
+        Ok(Self {
+            decoding_key: DecodingKey::from_rsa_pem(pem)?,
+            validation: Validation::new(Algorithm::RS256),
+        })
+    }
+
+    /// Restrict accepted audiences (recommended).
+    pub fn with_audience(mut self, audiences: &[String]) -> Self {
+        self.validation.set_audience(audiences);
+        self
+    }
+}
+
+impl PrincipalProvider for JwtPrincipalProvider {
+    fn principal(&self, headers: &HeaderMap) -> Result<Principal, AuthError> {
+        let token = header(headers, "authorization")
+            .and_then(|v| {
+                v.strip_prefix("Bearer ")
+                    .or_else(|| v.strip_prefix("bearer "))
+            })
+            .ok_or(AuthError::Missing("Authorization: Bearer"))?;
+        let data = decode::<L5mClaims>(token, &self.decoding_key, &self.validation)
+            .map_err(|_| AuthError::Unauthorized)?;
+        let c = data.claims;
+        Ok(Principal {
+            tenant_id: c.tenant,
+            context_mask: c.context.unwrap_or_else(|| "0xffff".to_string()),
+            policy_mask: c.policy.unwrap_or_else(|| "0xffff".to_string()),
+            trust_floor: c.trust.unwrap_or(0),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{encode, EncodingKey, Header};
+
+    fn token(secret: &[u8], body: serde_json::Value) -> String {
+        encode(&Header::default(), &body, &EncodingKey::from_secret(secret)).unwrap()
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn jwt_principal_is_derived_from_verified_claims() {
+        let secret = b"super-secret-key";
+        let provider = JwtPrincipalProvider::hs256(secret);
+        let exp = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600) as usize;
+        let t = token(
+            secret,
+            serde_json::json!({"tenant": 7, "policy": "0x2", "trust": 5, "exp": exp}),
+        );
+        let p = provider.principal(&bearer(&t)).unwrap();
+        assert_eq!(p.tenant_id, 7);
+        assert_eq!(p.policy_mask, "0x2");
+        assert_eq!(p.trust_floor, 5);
+    }
+
+    #[test]
+    fn jwt_with_wrong_signature_is_rejected() {
+        let provider = JwtPrincipalProvider::hs256(b"the-real-secret");
+        let exp = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600) as usize;
+        let forged = token(
+            b"attacker-secret",
+            serde_json::json!({"tenant": 1, "exp": exp}),
+        );
+        assert!(matches!(
+            provider.principal(&bearer(&forged)),
+            Err(AuthError::Unauthorized)
+        ));
+    }
+
+    #[test]
+    fn expired_jwt_is_rejected() {
+        let secret = b"k";
+        let provider = JwtPrincipalProvider::hs256(secret);
+        let t = token(secret, serde_json::json!({"tenant": 1, "exp": 1_000usize}));
+        assert!(provider.principal(&bearer(&t)).is_err());
+    }
+}
