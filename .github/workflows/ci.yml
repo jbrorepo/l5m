@@ -47,9 +47,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install pytest
-      - name: Test (against in-process stub server)
+      - name: Test SDK (against in-process stub server)
         run: python -m pytest -q
         working-directory: clients/python
+      - name: Test extraction pipeline (deterministic, no API key)
+        run: python -m pytest -q
+        working-directory: pipelines/extract
 
   fuzz:
     name: cargo-fuzz (segment parser, bounded)

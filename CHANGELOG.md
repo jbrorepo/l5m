@@ -61,6 +61,17 @@ All notable changes to L5M are documented here. Format loosely follows
   tenant-id-spraying client cannot blow up metrics memory.
 
 ### Integrations
+- **Memory-extraction pipeline** (`pipelines/extract`): offline transcript →
+  capsule extraction, the ingest-side complement to zero-inference-on-hot-path
+  retrieval. `rules` mode is deterministic and dependency-free (explicit
+  facts, decisions, attributes, preferences, dated facts — with speaker
+  attribution and chitchat exclusion); `llm` mode uses the Anthropic SDK
+  (`claude-opus-4-8`, structured outputs, adaptive thinking) for paraphrase
+  and multi-turn extraction. Idempotent re-ingestion via deterministic
+  capsule ids (SHA-256 of tenant+claim+source → u128), line-level provenance
+  (`source_uri: file#Lline`, verbatim evidence), trust levels by confidence.
+  6 tests (LLM mode tested against an injected fake client — no network in
+  CI); output verified end-to-end through `l5m-cli compile` → gated query.
 - **TypeScript SDK** (`clients/typescript`): zero-runtime-dependency client on
   the standard `fetch` (Node 18+, browsers, edge). Typed surface — `Capsule`,
   `QueryResponse`, `UsageRow` — with `insert` / `query` (incl. `asOf`

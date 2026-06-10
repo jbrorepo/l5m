@@ -410,10 +410,13 @@ docker run -v $(pwd)/data:/data jbrorepo/l5m query --segment /data/demo.segment 
 - [x] OpenAPI spec + TypeScript SDK (zero runtime deps)
 - [x] Scoped API keys (read/write/admin, tenant-bindable) + JWKS key rotation
 - [x] Per-tenant usage metering (Prometheus labels + admin `/v1/usage`)
+- [x] Admin/ops API (checkpoint, compaction, tenant stats, audit export)
+- [x] Durable server mode (`L5M_DATA_DIR`) + docker-compose, Helm chart, [HA guide](deploy/HA.md)
+- [x] Memory-extraction pipeline ([`pipelines/extract`](pipelines/extract/) — transcript → capsules, rules or Claude-based, offline)
 
 **Next:**
-- [ ] Memory-extraction pipeline (transcript → capsules, offline)
-- [ ] Admin/ops API (checkpoint, compaction, tenant stats, audit export)
+- [ ] Head-to-head benchmark vs Mem0/Zep OSS (honest harness, significance-tested)
+- [ ] crates.io / PyPI / npm publish + tagged v0.1.0 release
 
 **Later:**
 - [ ] Read replicas via immutable-segment shipping (HA)
