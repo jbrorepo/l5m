@@ -233,6 +233,57 @@ paths:
                         inserts: { type: integer }
                         deletes: { type: integer }
         "403": { description: Credential lacks admin scope }
+  /v1/admin/stats:
+    get:
+      summary: Operational snapshot — admin scope required
+      description: Base segments, active-buffer size, sealed runs, tombstones, durability.
+      responses:
+        "200":
+          description: Store stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  segments: { type: array, items: { type: object } }
+                  base_capsules: { type: integer }
+                  delta_len: { type: integer }
+                  sealed_runs: { type: integer }
+                  sealed_capsules: { type: integer }
+                  tombstones: { type: integer }
+                  durable: { type: boolean }
+        "403": { description: Credential lacks admin scope }
+  /v1/admin/compact:
+    post:
+      summary: Minor compaction — admin scope required
+      description: |
+        Consolidates the active buffer + sealed delta runs into a single run
+        without rewriting the base; bounds query fan-out on demand.
+      responses:
+        "200": { description: Compacted (returns new sealed_runs / delta_len) }
+        "403": { description: Credential lacks admin scope }
+  /v1/admin/checkpoint:
+    post:
+      summary: Durable checkpoint — admin scope required
+      description: |
+        Folds the live state into a timestamped base segment inside the
+        server-configured `L5M_CHECKPOINT_DIR`, then truncates the WAL in a
+        crash-safe order. The target path is never client-supplied.
+      responses:
+        "200": { description: Checkpointed (returns the segment path) }
+        "400": { description: Checkpointing not configured }
+        "403": { description: Credential lacks admin scope }
+  /v1/admin/audit/export:
+    get:
+      summary: Export the audit log — admin scope required
+      description: Raw hash-chained JSONL for SIEM ingestion / offline forensics.
+      responses:
+        "200":
+          description: Audit records
+          content:
+            application/x-ndjson: {}
+        "400": { description: Audit log not enabled }
+        "403": { description: Credential lacks admin scope }
   /v1/audit/verify:
     get:
       summary: Verify the tamper-evident audit chain

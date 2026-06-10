@@ -10,6 +10,8 @@
 //!                (scope = read|write|admin; optional tenant binding)
 //!   L5M_JWT_JWKS_FILE  path to a JWKS document for RS256 verification with
 //!                kid-based key selection; hot-reloaded when the file changes
+//!   L5M_CHECKPOINT_DIR directory for admin-triggered durable checkpoints
+//!                (POST /v1/admin/checkpoint)
 //!   L5M_DELTA_SEAL_THRESHOLD  active write-buffer size before sealing a run
 //!   L5M_AUTO_COMPACT_RUNS     sealed-run count that triggers minor compaction
 //!                             (0 disables automatic compaction)
@@ -149,12 +151,26 @@ async fn main() {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(l5m_server::DEFAULT_MAX_BODY_BYTES);
 
+    // Durable checkpoints (POST /v1/admin/checkpoint) land here; the path is
+    // server-configured so an admin credential can't direct writes elsewhere.
+    let checkpoint_dir = std::env::var("L5M_CHECKPOINT_DIR")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(std::path::PathBuf::from);
+    if let Some(dir) = &checkpoint_dir {
+        if let Err(err) = std::fs::create_dir_all(dir) {
+            tracing::error!(%err, ?dir, "failed to create checkpoint dir");
+            std::process::exit(1);
+        }
+    }
+
     let state = Arc::new(AppState {
         store: RwLock::new(store),
         principal,
         audit,
         rate_limiter,
         max_body_bytes,
+        checkpoint_dir,
     });
 
     let app = build_router(state);

@@ -83,6 +83,25 @@ pub struct QueryResponse {
     pub total_retrieval_ns: u128,
 }
 
+/// Operational snapshot returned by [`MemoryStore::stats`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StoreStats {
+    pub segments: Vec<SegmentMetadata>,
+    /// Total capsules across base segments (includes not-yet-compacted
+    /// tombstoned ones).
+    pub base_capsules: usize,
+    /// Capsules in the active (unsealed) write buffer.
+    pub delta_len: usize,
+    /// Sealed, immutable delta runs awaiting compaction.
+    pub sealed_runs: usize,
+    /// Total capsules across sealed runs.
+    pub sealed_capsules: usize,
+    /// Ids hidden from results pending physical removal by compaction.
+    pub tombstones: usize,
+    /// Whether writes are WAL-backed (survive restarts).
+    pub durable: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SegmentMetadata {
     pub path: PathBuf,
@@ -361,6 +380,26 @@ impl MemoryStore {
     /// Number of sealed, immutable delta runs awaiting compaction.
     pub fn sealed_run_count(&self) -> usize {
         self.sealed_deltas.len()
+    }
+
+    /// Operational snapshot for admin/ops surfaces: base segments, delta state,
+    /// and tombstone count.
+    pub fn stats(&self) -> StoreStats {
+        let sealed_capsules: usize = self.sealed_deltas.iter().map(|s| s.capsule_count()).sum();
+        let base_capsules: usize = self
+            .segments
+            .iter()
+            .map(|loaded| loaded.segment.capsule_count())
+            .sum();
+        StoreStats {
+            segments: self.segment_metadata(),
+            base_capsules,
+            delta_len: self.delta.len(),
+            sealed_runs: self.sealed_deltas.len(),
+            sealed_capsules,
+            tombstones: self.tombstones.len(),
+            durable: self.wal.is_some(),
+        }
     }
 
     /// Append into the active buffer, clearing any tombstone and superseding any

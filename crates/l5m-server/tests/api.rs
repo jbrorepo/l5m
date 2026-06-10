@@ -29,18 +29,27 @@ fn app_full(
         audit,
         rate_limiter,
         max_body_bytes: l5m_server::DEFAULT_MAX_BODY_BYTES,
+        checkpoint_dir: None,
     });
     build_router(state)
 }
 
 /// Router with an arbitrary principal provider (scoped-key / JWKS tests).
 fn app_with_provider(provider: Arc<dyn l5m_server::principal::PrincipalProvider>) -> axum::Router {
+    app_with_provider_and_checkpoint(provider, None)
+}
+
+fn app_with_provider_and_checkpoint(
+    provider: Arc<dyn l5m_server::principal::PrincipalProvider>,
+    checkpoint_dir: Option<std::path::PathBuf>,
+) -> axum::Router {
     let state = Arc::new(AppState {
         store: RwLock::new(MemoryStore::empty()),
         principal: provider,
         audit: None,
         rate_limiter: None,
         max_body_bytes: l5m_server::DEFAULT_MAX_BODY_BYTES,
+        checkpoint_dir,
     });
     build_router(state)
 }
@@ -469,6 +478,202 @@ async fn usage_endpoint_is_admin_only_and_meters_per_tenant() {
         "{text}"
     );
     assert!(text.contains("l5m_tenant_inserts_total{tenant=\"1\"} 1"));
+}
+
+#[tokio::test]
+async fn admin_api_stats_compact_checkpoint_audit_guard() {
+    use l5m_server::{Scope, ScopedKey};
+    let dir = tempfile::tempdir().unwrap();
+    let app = app_with_provider_and_checkpoint(
+        Arc::new(l5m_server::HeaderPrincipalProvider::with_keys(vec![
+            ScopedKey {
+                secret: "rw".into(),
+                scope: Scope::Write,
+                tenant: None,
+            },
+            ScopedKey {
+                secret: "root".into(),
+                scope: Scope::Admin,
+                tenant: None,
+            },
+        ])),
+        Some(dir.path().to_path_buf()),
+    );
+    let req = |key: &str, method: &str, uri: &str, body: Body| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("x-l5m-api-key", key)
+            .header("x-l5m-tenant", "1")
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap()
+    };
+
+    // Every admin endpoint refuses a write-scope credential.
+    for (method, uri) in [
+        ("GET", "/v1/admin/stats"),
+        ("POST", "/v1/admin/compact"),
+        ("POST", "/v1/admin/checkpoint"),
+        ("GET", "/v1/admin/audit/export"),
+    ] {
+        let status = app
+            .clone()
+            .oneshot(req("rw", method, uri, Body::empty()))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "{method} {uri} must be admin-only"
+        );
+    }
+
+    // Write some data, then exercise stats -> compact -> checkpoint.
+    let cap = serde_json::json!({
+        "capsule_id":"1","tenant_id":1,
+        "claim":"ops kelpstone","evidence":"ops kelpstone",
+        "source_id":1,"valid_from":1,"observed_at":1,"last_verified_at":1,
+        "context_mask":"0xffff","policy_mask":"0xffff","trust_level":8,
+        "classification":1,"poison_risk":0
+    });
+    app.clone()
+        .oneshot(req(
+            "rw",
+            "POST",
+            "/v1/memories",
+            Body::from(cap.to_string()),
+        ))
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(req("root", "GET", "/v1/admin/stats", Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let stats = body_json(resp).await;
+    assert_eq!(stats["delta_len"], 1, "one live delta capsule: {stats}");
+
+    let resp = app
+        .clone()
+        .oneshot(req("root", "POST", "/v1/admin/compact", Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Checkpoint folds everything into a base segment file on disk.
+    let resp = app
+        .clone()
+        .oneshot(req("root", "POST", "/v1/admin/checkpoint", Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp).await;
+    assert_eq!(v["status"], "checkpointed");
+    let path = std::path::PathBuf::from(v["path"].as_str().unwrap());
+    assert!(path.exists(), "checkpoint segment written to disk");
+    assert_eq!(v["base_capsules"], 1);
+
+    // After checkpoint the delta is empty and the base holds the data.
+    let resp = app
+        .clone()
+        .oneshot(req("root", "GET", "/v1/admin/stats", Body::empty()))
+        .await
+        .unwrap();
+    let stats = body_json(resp).await;
+    assert_eq!(stats["delta_len"], 0);
+    assert_eq!(stats["base_capsules"], 1);
+
+    // Data still queryable after the whole ops cycle.
+    let q = serde_json::json!({"query":"ops kelpstone"}).to_string();
+    let resp = app
+        .clone()
+        .oneshot(req("rw", "POST", "/v1/query", Body::from(q)))
+        .await
+        .unwrap();
+    let v = body_json(resp).await;
+    assert!(v["frame"]["capsules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["claim"].as_str().unwrap_or("").contains("kelpstone")));
+
+    // Audit export without an audit log configured -> clear 400, not a 500.
+    let status = app
+        .oneshot(req("root", "GET", "/v1/admin/audit/export", Body::empty()))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn admin_audit_export_returns_chained_records() {
+    use l5m_server::{Scope, ScopedKey};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let state = Arc::new(AppState {
+        store: RwLock::new(MemoryStore::empty()),
+        principal: Arc::new(l5m_server::HeaderPrincipalProvider::with_keys(vec![
+            ScopedKey {
+                secret: "root".into(),
+                scope: Scope::Admin,
+                tenant: None,
+            },
+        ])),
+        audit: Some(l5m_server::AuditSink {
+            log: tokio::sync::Mutex::new(l5m_core::AuditLog::open(&path).unwrap()),
+            path: path.clone(),
+        }),
+        rate_limiter: None,
+        max_body_bytes: l5m_server::DEFAULT_MAX_BODY_BYTES,
+        checkpoint_dir: None,
+    });
+    let app = build_router(state);
+
+    let req = |method: &str, uri: &str, body: Body| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("x-l5m-api-key", "root")
+            .header("x-l5m-tenant", "1")
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap()
+    };
+    // One audited query, then export.
+    let q = serde_json::json!({"query":"anything"}).to_string();
+    app.clone()
+        .oneshot(req("POST", "/v1/query", Body::from(q)))
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(req("GET", "/v1/admin/audit/export", Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("ndjson"));
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(lines.len(), 1, "one audited query exported");
+    let record: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert!(
+        record.get("query_hash").is_some(),
+        "chained record shape: {record}"
+    );
 }
 
 #[tokio::test]

@@ -39,4 +39,6 @@ pub use product::{
 pub use relation::{RelationEdge, RelationKind};
 pub use retrieve::{retrieve, retrieve_with_timings, RetrievalConfig, RetrievalTimings};
 pub use segment::Segment;
-pub use store::{MemoryStore, QueryRequest, QueryResponse, RetrievalMode, SegmentMetadata};
+pub use store::{
+    MemoryStore, QueryRequest, QueryResponse, RetrievalMode, SegmentMetadata, StoreStats,
+};

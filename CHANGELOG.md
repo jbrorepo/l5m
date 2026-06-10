@@ -21,6 +21,19 @@ All notable changes to L5M are documented here. Format loosely follows
   kid selection, forged-key rejection, and live rotation (old key retired,
   new key accepted, same process).
 
+### Operations
+- **Admin/ops API** (all endpoints require an admin-scope credential):
+  `GET /v1/admin/stats` (segments, active buffer, sealed runs, tombstones,
+  durability); `POST /v1/admin/compact` (minor compaction on demand);
+  `POST /v1/admin/checkpoint` (durable fold into a timestamped base segment
+  under server-configured `L5M_CHECKPOINT_DIR` + crash-safe WAL truncation —
+  the path is never client-supplied, so an admin credential cannot be turned
+  into a path-traversal write); `GET /v1/admin/audit/export` (raw hash-chained
+  JSONL for SIEM ingestion). `MemoryStore::stats()` added in core. Tests cover
+  the full ops cycle (write → stats → compact → checkpoint-to-disk → query
+  still serves) plus admin-only guards on every endpoint and audit export
+  content.
+
 ### Metering & observability
 - **Per-tenant usage metrics**: queries, capsules returned, inserts, and
   deletes are now attributed to the tenant that incurred them — the metering

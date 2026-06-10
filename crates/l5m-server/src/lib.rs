@@ -44,6 +44,10 @@ pub struct AppState {
     pub rate_limiter: Option<RateLimiter>,
     /// Max request body size in bytes.
     pub max_body_bytes: usize,
+    /// Directory durable checkpoints are written into (`POST
+    /// /v1/admin/checkpoint`). Server-configured, never client-supplied, so an
+    /// admin credential cannot be leveraged into a path-traversal write.
+    pub checkpoint_dir: Option<PathBuf>,
 }
 
 impl AppState {
@@ -77,6 +81,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/memories/:id", axum::routing::delete(delete_memory))
         .route("/v1/audit/verify", get(audit_verify))
         .route("/v1/usage", get(usage))
+        .route("/v1/admin/stats", get(admin_stats))
+        .route("/v1/admin/compact", post(admin_compact))
+        .route("/v1/admin/checkpoint", post(admin_checkpoint))
+        .route("/v1/admin/audit/export", get(admin_audit_export))
         .layer(RequestBodyLimitLayer::new(max_body))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -136,6 +144,87 @@ async fn usage(
         })
         .collect();
     Ok(Json(json!({ "tenants": tenants })).into_response())
+}
+
+/// Operational snapshot (segments, delta, tombstones) — admin scope.
+async fn admin_stats(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let _admin = state.authorize(&headers, Scope::Admin)?;
+    let stats = state.store.read().await.stats();
+    Ok(Json(serde_json::to_value(stats).unwrap_or(Value::Null)).into_response())
+}
+
+/// Minor compaction: consolidate the active buffer + sealed runs into one run
+/// without rewriting the base — bounds query fan-out on demand. Admin scope.
+async fn admin_compact(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let _admin = state.authorize(&headers, Scope::Admin)?;
+    let mut store = state.store.write().await;
+    store
+        .compact_delta()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let stats = store.stats();
+    Ok(Json(json!({
+        "status": "compacted",
+        "sealed_runs": stats.sealed_runs,
+        "delta_len": stats.delta_len,
+    }))
+    .into_response())
+}
+
+/// Durable checkpoint: fold the live state into a timestamped base segment in
+/// the server-configured checkpoint directory, then truncate the WAL
+/// (crash-safe order). The path is never client-supplied. Admin scope.
+async fn admin_checkpoint(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let _admin = state.authorize(&headers, Scope::Admin)?;
+    let Some(dir) = &state.checkpoint_dir else {
+        return Err(ApiError::bad_request(
+            "checkpointing not configured: set L5M_CHECKPOINT_DIR".to_string(),
+        ));
+    };
+    let path = dir.join(format!("checkpoint-{}.segment", now_unix()));
+    let mut store = state.store.write().await;
+    store
+        .compact_to(&path)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let stats = store.stats();
+    Ok(Json(json!({
+        "status": "checkpointed",
+        "path": path.display().to_string(),
+        "base_capsules": stats.base_capsules,
+    }))
+    .into_response())
+}
+
+/// Export the raw audit log (hash-chained JSONL) for SIEM ingestion or
+/// offline forensics. Admin scope.
+async fn admin_audit_export(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let _admin = state.authorize(&headers, Scope::Admin)?;
+    let Some(audit) = &state.audit else {
+        return Err(ApiError::bad_request(
+            "audit log not enabled: set L5M_AUDIT_LOG".to_string(),
+        ));
+    };
+    // Hold the log lock during the read so a concurrent append can't tear a line.
+    let _guard = audit.log.lock().await;
+    let content = std::fs::read_to_string(&audit.path)
+        .map_err(|e| ApiError::internal(format!("read audit log: {e}")))?;
+    Ok((
+        StatusCode::OK,
+        [("content-type", "application/x-ndjson")],
+        content,
+    )
+        .into_response())
 }
 
 async fn metrics(State(state): State<Arc<AppState>>) -> Response {
