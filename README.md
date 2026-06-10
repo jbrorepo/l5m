@@ -322,6 +322,7 @@ See [examples/](examples/) for complete runnable examples:
   (acknowledged writes survive crashes), automatic compaction
 - **Time-travel recall**: bi-temporal capsules (`valid_from`/`valid_until`/`observed_at`)
   with `as_of` point-in-time queries and supersession — ask "what did we believe then?"
+  ([guide](docs/time-travel.md))
 - **Encryption at rest**: ChaCha20-Poly1305 sealed segments with pluggable key providers
 - **Tamper-evident audit**: hash-chained access log with `verify` endpoint
 - **AuthN**: JWT (HS256/RS256) or API key; principal resolved from verified
@@ -385,6 +386,7 @@ docker run -v $(pwd)/data:/data jbrorepo/l5m query --segment /data/demo.segment 
 
 **Guides**
 - [Quick Start](docs/QUICKSTART.md) — first query in minutes
+- [Time-Travel Recall](docs/time-travel.md) — bi-temporal memory, `as_of` queries, supersession, retention
 - [Architecture](docs/architecture.md) — how L5M works internally
 - [Vector-DB peer benchmark](bench/README.md) — how the comparison is run
 
