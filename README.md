@@ -59,6 +59,18 @@ Full method, CIs, and honest caveats: [`SCORE_ANALYSIS.md`](SCORE_ANALYSIS.md).
 
 Get from zero to your first query in under 5 minutes.
 
+### One-command demo
+
+```bash
+./scripts/demo.sh
+```
+
+Builds the server and demonstrates — over real HTTP, no mocks — durable
+writes, **gate-before-scoring tenant isolation** (a perfect-match query from
+the wrong tenant returns nothing), **time-travel recall** (`as_of` returns the
+office address that was true *then*), per-tenant **metering**, and the
+**tamper-evident audit chain**. Cleans up after itself.
+
 ### Give your AI agent memory (MCP — fastest path)
 
 L5M ships an [MCP server](crates/l5m-mcp/) that plugs into Claude Desktop,
