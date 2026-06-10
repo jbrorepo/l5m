@@ -312,7 +312,7 @@ See [examples/](examples/) for complete runnable examples:
 
 **L5M may not be ideal for:**
 - ❌ Pure semantic search with no security/tenancy requirements (a plain vector DB is simpler)
-- ❌ Multi-node distributed deployments (single-node today; immutable segments make replication straightforward — on the roadmap)
+- ❌ Multi-node distributed deployments (single-writer today — same operational shape as single-node Postgres; see [deploy/HA.md](deploy/HA.md) for topology, backup/restore, and the replication roadmap)
 
 ---
 
@@ -334,6 +334,8 @@ See [examples/](examples/) for complete runnable examples:
 - **Python SDK**: [`clients/python`](clients/python/) — dependency-free client
 - **Supply chain**: signed releases (cosign/Sigstore) + CycloneDX/SPDX SBOM,
   `cargo-deny`, continuous fuzzing
+- **Deployment**: Docker (healthchecked, non-root, read-only fs), docker-compose,
+  Helm chart, [HA/backup guide](deploy/HA.md)
 
 See [docs/segment-format.md](docs/segment-format.md) for the on-disk format and
 [docs/security-model.md](docs/security-model.md) for the security model.

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: l5m
+description: L5M security-gated memory server — gates before scoring, WAL-durable writes, tamper-evident audit
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/jbrorepo/l5m
+sources:
+  - https://github.com/jbrorepo/l5m

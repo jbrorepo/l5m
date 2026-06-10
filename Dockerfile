@@ -6,9 +6,17 @@ COPY . .
 RUN cargo build --release -p l5m-server
 
 FROM debian:bookworm-slim
-RUN useradd --system --uid 10001 l5m
+# wget is for container healthchecks; ca-certificates for any TLS sidecar use.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 l5m \
+    && mkdir -p /data && chown l5m:l5m /data
 COPY --from=builder /build/target/release/l5m-server /usr/local/bin/l5m-server
 USER l5m
 EXPOSE 8080
+VOLUME /data
 ENV L5M_BIND=0.0.0.0:8080
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s \
+    CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
 ENTRYPOINT ["l5m-server"]

@@ -1,0 +1,56 @@
+# L5M Helm values. Single-writer deployment (Recreate strategy) with a
+# persistent /data volume for the WAL, checkpoints, and audit log.
+
+image:
+  repository: l5m-server
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1 # single writer; see deploy/HA.md for the read-replica pattern
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: "" # cluster default
+
+auth:
+  # Production: mount a JWKS document and set jwksFile. Rotation = update the
+  # Secret; the server hot-reloads on file change.
+  jwksSecretName: "" # Secret with key `jwks.json`
+  # Dev / trusted networks: scoped API keys `secret:scope[:tenant],...`,
+  # injected via the Secret named below (key `api-keys`).
+  apiKeysSecretName: ""
+
+config:
+  ratePerSec: "50"
+  rateBurst: "100"
+  maxBodyBytes: "1048576"
+  deltaSealThreshold: "1024"
+  autoCompactRuns: "16"
+  auditLog: /data/audit.jsonl
+  # Extra environment variables, verbatim.
+  extraEnv: []
+  #  - name: L5M_TRUST_FLOOR
+  #    value: "0"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]

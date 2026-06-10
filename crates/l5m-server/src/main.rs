@@ -10,8 +10,12 @@
 //!                (scope = read|write|admin; optional tenant binding)
 //!   L5M_JWT_JWKS_FILE  path to a JWKS document for RS256 verification with
 //!                kid-based key selection; hot-reloaded when the file changes
+//!   L5M_DATA_DIR durable mode: WAL-backed writes that survive restarts; the
+//!                newest checkpoint in <data>/checkpoints is auto-loaded as a
+//!                base on startup. Without it the store is EPHEMERAL.
 //!   L5M_CHECKPOINT_DIR directory for admin-triggered durable checkpoints
-//!                (POST /v1/admin/checkpoint)
+//!                (POST /v1/admin/checkpoint); defaults to
+//!                $L5M_DATA_DIR/checkpoints when L5M_DATA_DIR is set
 //!   L5M_DELTA_SEAL_THRESHOLD  active write-buffer size before sealing a run
 //!   L5M_AUTO_COMPACT_RUNS     sealed-run count that triggers minor compaction
 //!                             (0 disables automatic compaction)
@@ -35,18 +39,69 @@ async fn main() {
     let bind = std::env::var("L5M_BIND").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     let api_key = std::env::var("L5M_API_KEY").ok();
 
-    let store = match std::env::var("L5M_SEGMENTS") {
-        Ok(list) if !list.trim().is_empty() => {
-            let paths: Vec<&str> = list.split(',').map(str::trim).collect();
-            match MemoryStore::open_segments(paths) {
-                Ok(store) => store,
+    // Base segments named explicitly by the operator.
+    let mut base_paths: Vec<std::path::PathBuf> = match std::env::var("L5M_SEGMENTS") {
+        Ok(list) if !list.trim().is_empty() => list
+            .split(',')
+            .map(|s| std::path::PathBuf::from(s.trim()))
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    // Durable mode: L5M_DATA_DIR enables a write-ahead log so acknowledged
+    // writes survive restarts. Checkpoints default to <data>/checkpoints, and
+    // the NEWEST checkpoint is auto-loaded as a base on startup — required for
+    // correctness, because a checkpoint truncates the WAL (the data now lives
+    // in the checkpoint segment, not the log).
+    let data_dir = std::env::var("L5M_DATA_DIR")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(std::path::PathBuf::from);
+    let checkpoint_dir = std::env::var("L5M_CHECKPOINT_DIR")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| data_dir.as_ref().map(|d| d.join("checkpoints")));
+    if let Some(dir) = &checkpoint_dir {
+        if let Err(err) = std::fs::create_dir_all(dir) {
+            tracing::error!(%err, ?dir, "failed to create checkpoint dir");
+            std::process::exit(1);
+        }
+        if let Some(newest) = newest_checkpoint(dir) {
+            tracing::info!(?newest, "loading newest checkpoint as base");
+            base_paths.push(newest);
+        }
+    }
+
+    let store = match &data_dir {
+        Some(dir) => {
+            if let Err(err) = std::fs::create_dir_all(dir) {
+                tracing::error!(%err, ?dir, "failed to create data dir");
+                std::process::exit(1);
+            }
+            let wal = dir.join("l5m.wal");
+            match MemoryStore::open_durable(&base_paths, &wal) {
+                Ok(store) => {
+                    tracing::info!(?wal, "durable mode: WAL-backed writes");
+                    store
+                }
                 Err(err) => {
-                    tracing::error!(%err, "failed to open segments");
+                    tracing::error!(%err, "failed to open durable store");
                     std::process::exit(1);
                 }
             }
         }
-        _ => MemoryStore::empty(),
+        None if !base_paths.is_empty() => match MemoryStore::open_segments(&base_paths) {
+            Ok(store) => store,
+            Err(err) => {
+                tracing::error!(%err, "failed to open segments");
+                std::process::exit(1);
+            }
+        },
+        None => {
+            tracing::warn!("EPHEMERAL store: set L5M_DATA_DIR for durable writes");
+            MemoryStore::empty()
+        }
     };
     // Tune the real-time delta: L5M_DELTA_SEAL_THRESHOLD bounds the active write
     // buffer; L5M_AUTO_COMPACT_RUNS bounds query fan-out (set 0 to disable
@@ -151,19 +206,6 @@ async fn main() {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(l5m_server::DEFAULT_MAX_BODY_BYTES);
 
-    // Durable checkpoints (POST /v1/admin/checkpoint) land here; the path is
-    // server-configured so an admin credential can't direct writes elsewhere.
-    let checkpoint_dir = std::env::var("L5M_CHECKPOINT_DIR")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .map(std::path::PathBuf::from);
-    if let Some(dir) = &checkpoint_dir {
-        if let Err(err) = std::fs::create_dir_all(dir) {
-            tracing::error!(%err, ?dir, "failed to create checkpoint dir");
-            std::process::exit(1);
-        }
-    }
-
     let state = Arc::new(AppState {
         store: RwLock::new(store),
         principal,
@@ -194,4 +236,22 @@ async fn main() {
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
     tracing::info!("shutting down");
+}
+
+/// Newest `*.segment` file in the checkpoint directory (by modification time).
+fn newest_checkpoint(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("segment") {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if newest.as_ref().is_none_or(|(t, _)| modified > *t) {
+            newest = Some((modified, path));
+        }
+    }
+    newest.map(|(_, path)| path)
 }

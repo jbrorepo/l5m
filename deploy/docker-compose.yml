@@ -1,0 +1,53 @@
+# Production-shaped single-node deployment: durable WAL volume, audit log,
+# scoped API keys, rate limiting, health checks, checkpoint dir.
+#
+#   cd deploy
+#   L5M_ADMIN_KEY=$(openssl rand -hex 24) L5M_WRITE_KEY=$(openssl rand -hex 24) \
+#     docker compose up -d
+#   curl -H "x-l5m-api-key: $L5M_WRITE_KEY" -H "x-l5m-tenant: 1" \
+#     -H 'content-type: application/json' \
+#     -d '{"query":"hello"}' localhost:8080/v1/query
+#
+# For production auth, prefer JWT: set L5M_JWT_JWKS_FILE and mount your JWKS
+# (see ../SECURITY.md and crates/l5m-server/src/main.rs for all knobs).
+
+services:
+  l5m:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: l5m-server:latest
+    ports:
+      - "8080:8080"
+    environment:
+      L5M_BIND: 0.0.0.0:8080
+      # Scoped keys: secret:scope[:tenant]. Generate real secrets; do NOT ship
+      # defaults to production.
+      L5M_API_KEYS: "${L5M_WRITE_KEY:?set L5M_WRITE_KEY}:write,${L5M_ADMIN_KEY:?set L5M_ADMIN_KEY}:admin"
+      # Durability + ops: WAL-backed writes survive restarts; checkpoints
+      # default to /data/checkpoints and the newest is auto-loaded on boot.
+      L5M_DATA_DIR: /data
+      L5M_AUDIT_LOG: /data/audit.jsonl
+      # Abuse resistance
+      L5M_RATE_PER_SEC: "50"
+      L5M_RATE_BURST: "100"
+      L5M_MAX_BODY_BYTES: "1048576"
+      # Delta tuning (defaults shown)
+      L5M_DELTA_SEAL_THRESHOLD: "1024"
+      L5M_AUTO_COMPACT_RUNS: "16"
+    volumes:
+      - l5m-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    # Run read-only except the data volume — matches the threat model.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  l5m-data:

@@ -76,6 +76,17 @@ jobs:
         run: npm install --no-fund --no-audit && npm test
         working-directory: clients/typescript
 
+  deploy-manifests:
+    name: helm lint + compose validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/l5m
+      - run: helm template test deploy/helm/l5m > /dev/null
+      - name: Validate docker-compose
+        run: L5M_WRITE_KEY=x L5M_ADMIN_KEY=y docker compose -f deploy/docker-compose.yml config --quiet
+
   supply-chain:
     name: cargo-deny (advisories, licenses, bans)
     runs-on: ubuntu-latest

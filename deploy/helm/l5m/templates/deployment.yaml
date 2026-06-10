@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "l5m.fullname" . }}
+  labels: {{- include "l5m.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # Single writer over a single PVC: never run two writers against one WAL.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "l5m.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "l5m.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: l5m
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: L5M_BIND
+              value: 0.0.0.0:8080
+            - name: L5M_DATA_DIR
+              value: /data
+            - name: L5M_AUDIT_LOG
+              value: {{ .Values.config.auditLog | quote }}
+            - name: L5M_RATE_PER_SEC
+              value: {{ .Values.config.ratePerSec | quote }}
+            - name: L5M_RATE_BURST
+              value: {{ .Values.config.rateBurst | quote }}
+            - name: L5M_MAX_BODY_BYTES
+              value: {{ .Values.config.maxBodyBytes | quote }}
+            - name: L5M_DELTA_SEAL_THRESHOLD
+              value: {{ .Values.config.deltaSealThreshold | quote }}
+            - name: L5M_AUTO_COMPACT_RUNS
+              value: {{ .Values.config.autoCompactRuns | quote }}
+            {{- if .Values.auth.jwksSecretName }}
+            - name: L5M_JWT_JWKS_FILE
+              value: /auth/jwks.json
+            {{- end }}
+            {{- if .Values.auth.apiKeysSecretName }}
+            - name: L5M_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.apiKeysSecretName }}
+                  key: api-keys
+            {{- end }}
+            {{- with .Values.config.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.auth.jwksSecretName }}
+            - name: jwks
+              mountPath: /auth
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "l5m.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.auth.jwksSecretName }}
+        - name: jwks
+          secret:
+            secretName: {{ .Values.auth.jwksSecretName }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}

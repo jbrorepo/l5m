@@ -22,6 +22,23 @@ All notable changes to L5M are documented here. Format loosely follows
   new key accepted, same process).
 
 ### Operations
+- **Durable server mode** (`L5M_DATA_DIR`): the HTTP server now wires up the
+  write-ahead log — acknowledged writes survive restarts (previously only the
+  embedded library and MCP server were durable; server mode was ephemeral).
+  Checkpoints default to `<data>/checkpoints` and the **newest checkpoint is
+  auto-loaded as a base on startup**, closing a restart-after-checkpoint data
+  loss footgun (a checkpoint truncates the WAL, so the data lives in the
+  checkpoint file). Verified end-to-end: insert → kill → restart → memory
+  survives. Without `L5M_DATA_DIR` the store is ephemeral and says so at boot.
+- **Deployment packaging** (`deploy/`): production-shaped `docker-compose.yml`
+  (durable volume, scoped-key secrets required via env, rate limits, read-only
+  root fs, healthcheck — validated with `docker compose config`); Helm chart
+  (single-writer `Recreate` strategy, PVC, JWKS-or-API-keys Secrets, liveness/
+  readiness probes, non-root + read-only-rootfs + all-caps-dropped); `HA.md`
+  documenting today's single-writer topology, zero-RPO crash safety, backup/
+  restore via checkpoints, and the labeled read-replica-via-segment-shipping
+  roadmap. Dockerfile gains a HEALTHCHECK and /data volume. CI lints the chart
+  and validates the compose file.
 - **Admin/ops API** (all endpoints require an admin-scope credential):
   `GET /v1/admin/stats` (segments, active buffer, sealed runs, tombstones,
   durability); `POST /v1/admin/compact` (minor compaction on demand);
