@@ -1,0 +1,33 @@
+{
+  "name": "l5m-client",
+  "version": "0.1.0",
+  "description": "TypeScript client for the L5M security-gated memory server",
+  "license": "(MIT OR Apache-2.0)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jbrorepo/l5m",
+    "directory": "clients/typescript"
+  },
+  "keywords": ["memory", "retrieval", "rag", "security", "multi-tenant", "ai-agents"],
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": ["dist/src"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test \"dist/test/*.test.js\""
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}

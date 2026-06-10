@@ -133,6 +133,11 @@ class Client:
         """Hide a memory from all future results (delete / supersede)."""
         return self._request("DELETE", f"/v1/memories/{capsule_id}")
 
+    def usage(self) -> List[Dict[str, Any]]:
+        """Per-tenant usage metering rows. Requires an admin-scope credential
+        (otherwise the server responds 403 -> AuthError)."""
+        return self._request("GET", "/v1/usage")["tenants"]
+
     def verify_audit(self) -> Dict[str, Any]:
         """Verify the tamper-evident audit chain. Returns
         ``{"intact": true, "verified": N}`` when the hash chain is unbroken."""

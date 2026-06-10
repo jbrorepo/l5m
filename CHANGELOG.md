@@ -31,6 +31,13 @@ All notable changes to L5M are documented here. Format loosely follows
   tenant-id-spraying client cannot blow up metrics memory.
 
 ### Integrations
+- **TypeScript SDK** (`clients/typescript`): zero-runtime-dependency client on
+  the standard `fetch` (Node 18+, browsers, edge). Typed surface — `Capsule`,
+  `QueryResponse`, `UsageRow` — with `insert` / `query` (incl. `asOf`
+  time-travel) / `delete` / `usage` / `verifyAudit` / `metrics` / `healthz`,
+  and typed errors (`AuthError` 401/403, `RateLimited` 429). 11 tests against
+  an in-process `node:http` stub via `node:test`; CI job added. Python SDK
+  gains `usage()` for parity.
 - **MCP server** (`l5m-mcp` crate): security-gated memory for any MCP host
   (Claude Desktop/Code, ChatGPT, Copilot, custom agents) over stdio JSON-RPC.
   Tools: `remember` / `recall` (with point-in-time `as_of`) / `forget`. The

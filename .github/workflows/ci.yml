@@ -64,6 +64,18 @@ jobs:
         # Coverage-guided libFuzzer run; non-zero exit on any crash/OOM/timeout.
         run: cargo fuzz run segment_parse -- -max_total_time=60 -rss_limit_mb=4096
 
+  typescript-sdk:
+    name: typescript client (zero runtime deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Test (tsc + node:test against in-process stub server)
+        run: npm install --no-fund --no-audit && npm test
+        working-directory: clients/typescript
+
   supply-chain:
     name: cargo-deny (advisories, licenses, bans)
     runs-on: ubuntu-latest

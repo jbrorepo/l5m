@@ -402,11 +402,11 @@ docker run -v $(pwd)/data:/data jbrorepo/l5m query --segment /data/demo.segment 
 - [x] MCP server (`l5m-mcp`) — memory for Claude/ChatGPT/Copilot agents
 - [x] Signed releases + SBOM (cosign/Sigstore)
 - [x] Continuous fuzzing (in-tree + cargo-fuzz in CI)
+- [x] OpenAPI spec + TypeScript SDK (zero runtime deps)
+- [x] Scoped API keys (read/write/admin, tenant-bindable) + JWKS key rotation
+- [x] Per-tenant usage metering (Prometheus labels + admin `/v1/usage`)
 
 **Next:**
-- [ ] OpenAPI spec + TypeScript SDK
-- [ ] Scoped API keys + JWKS key rotation for OIDC
-- [ ] Per-tenant usage metrics (metering)
 - [ ] Memory-extraction pipeline (transcript → capsules, offline)
 - [ ] Admin/ops API (checkpoint, compaction, tenant stats, audit export)
 

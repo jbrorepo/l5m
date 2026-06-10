@@ -59,6 +59,21 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif self.path == "/v1/audit/verify":
             self._send(200, {"intact": True, "verified": 2})
+        elif self.path == "/v1/usage":
+            self._send(
+                200,
+                {
+                    "tenants": [
+                        {
+                            "tenant": 1,
+                            "queries": 2,
+                            "capsules_returned": 4,
+                            "inserts": 1,
+                            "deletes": 0,
+                        }
+                    ]
+                },
+            )
         else:
             self._send(404, {"error": "not found"})
 
@@ -144,6 +159,12 @@ def test_rate_limited_maps_429(server):
     c = client(server, tenant_id=999)
     with pytest.raises(RateLimited):
         c.query("hi")
+
+
+def test_usage_returns_metering_rows(server):
+    rows = client(server).usage()
+    assert rows[0]["tenant"] == 1
+    assert rows[0]["queries"] == 2
 
 
 def test_verify_audit(server):
