@@ -376,6 +376,7 @@ docker run -v $(pwd)/data:/data jbrorepo/l5m query --segment /data/demo.segment 
 **Security**
 - [Threat Model](THREAT_MODEL.md) — assets, trust boundaries, threats → mitigations → tests
 - [Security Policy](SECURITY.md) — vulnerability disclosure + assurance in CI
+- [Compliance Mapping](COMPLIANCE.md) — SOC 2 / ISO 27001 / GDPR / HIPAA controls, each with an executable test as evidence
 
 **Evidence (reproducible)**
 - [Score Analysis](SCORE_ANALYSIS.md) — accuracy/latency with CIs + significance

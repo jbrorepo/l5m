@@ -66,6 +66,13 @@ cosign verify-blob \
   <file>
 ```
 
+## Compliance
+
+[COMPLIANCE.md](COMPLIANCE.md) maps product controls to SOC 2 / ISO 27001 /
+GDPR / HIPAA criteria — each with the executable test or CI job that proves
+it, plus an explicit list of the organizational controls that remain the
+deployer's responsibility.
+
 ## Verifying the security claims yourself
 
 ```bash
