@@ -394,6 +394,7 @@ docker run -v $(pwd)/data:/data jbrorepo/l5m query --segment /data/demo.segment 
 - [Compliance Mapping](COMPLIANCE.md) — SOC 2 / ISO 27001 / GDPR / HIPAA controls, each with an executable test as evidence
 
 **Evidence (reproducible)**
+- [Gated Retrieval Benchmark](reports/GATED_RETRIEVAL.md) — gates vs vector-DB metadata filtering: 0 vs 92% embargoed-memory disclosure at 100K docs / 100 tenants (runs locally, no API keys)
 - [Score Analysis](SCORE_ANALYSIS.md) — accuracy/latency with CIs + significance
 - [Optimization Report](OPTIMIZATION_REPORT.md) — what changed, with reproduce commands
 - [Validation Report](VALIDATION_REPORT.md) — independent re-derivation of every claim
