@@ -467,10 +467,10 @@ fn generate_synthetic_segment(
             // floor 4), validity (expired or future), or the probe's narrowed
             // policy mask. Keep in sync with the capsule construction above.
             target_embargoed: needle
-                && (target % 19 == 0 // trust_level 2 < floor 4
-                    || target % 31 == 0 // valid_until expired before as_of
-                    || target % 23 == 0 // valid_from in the future
-                    || (index % 7 == 0 && target % 17 == 0)), // policy 0x8 vs probe 0x1
+                && (target.is_multiple_of(19) // trust_level 2 < floor 4
+                    || target.is_multiple_of(31) // valid_until expired before as_of
+                    || target.is_multiple_of(23) // valid_from in the future
+                    || (index.is_multiple_of(7) && target.is_multiple_of(17))), // policy 0x8 vs probe 0x1
         });
     }
 
