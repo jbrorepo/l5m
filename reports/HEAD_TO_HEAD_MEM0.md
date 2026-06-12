@@ -70,7 +70,16 @@ We could have shipped "Mem0: 0.067" with a straight face and a reproducible
 harness. It would have been misleading. This project's benchmark policy is
 that numbers must measure what they claim to measure.
 
-**Run 2 (planned): QA accuracy — the protocol Mem0's own evaluations use.**
+**Run 2 (in progress, paused at 33/50 on budget): QA accuracy.**
+Clean re-ingestion with global TPM pacing (no silent rate-limit dropouts;
+completed items carry 221-258 memories vs the degraded run's ~18) reached
+33/50 questions before API credits ran out; the fail-fast guard aborted
+rather than degrade. Stores are persisted and the run resumes exactly where
+it stopped (`bench/mem0_peer.py` is resumable; `bench/qa_eval.py` is written
+and ready). Remaining cost to finish: ~17 questions of ingestion + the
+answer/judge phase.
+
+**Run 2 protocol: QA accuracy — the protocol Mem0's own evaluations use.**
 Each system retrieves its top-k context; the same answerer model generates an
 answer from that context; the same judge scores it against gold. This measures
 what both systems actually promise (answer the question from memory) without
