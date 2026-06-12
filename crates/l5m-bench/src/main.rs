@@ -38,6 +38,11 @@ struct Args {
     /// memory-retrieval case and show the LSH index's sublinear behavior.
     #[arg(long)]
     needle: bool,
+    /// Export the synthetic corpus + queries (with ground-truth target ids) as
+    /// JSON so an external peer (e.g. a vector DB) can run the identical
+    /// gated-retrieval workload. Only meaningful with --synthetic-capsules.
+    #[arg(long)]
+    export_corpus: Option<PathBuf>,
     /// Number of tenants to spread the synthetic corpus across. Each query is
     /// for one tenant, so the gate scan only touches that tenant's slice —
     /// demonstrates that tenant isolation (security) is also the latency win.
@@ -57,6 +62,15 @@ struct QueryFixture {
     include_supporting: bool,
     #[serde(default)]
     include_contradictions: bool,
+    /// Ground-truth capsule the (needle) query targets, enabling recall
+    /// measurement alongside latency.
+    #[serde(default)]
+    target_capsule_id: Option<u128>,
+    /// True when the target is legitimately ungated-out for this probe (low
+    /// trust, expired/future validity, or policy mismatch): the CORRECT result
+    /// is to not return it. Disclosing an embargoed target is a violation.
+    #[serde(default)]
+    target_embargoed: bool,
 }
 
 fn main() {
@@ -74,12 +88,13 @@ fn run() -> Result<()> {
         ));
     }
 
-    let (segment, probes, synthetic_segment_path) = if args.synthetic_capsules > 0 {
+    let (segment, probes, targets, synthetic_segment_path) = if args.synthetic_capsules > 0 {
         let (segment_path, fixtures, compile_ns) = generate_synthetic_segment(
             args.synthetic_capsules,
             args.synthetic_queries,
             args.needle,
             args.tenants.max(1),
+            args.export_corpus.as_deref(),
         )?;
         let open_start = Instant::now();
         let segment = Segment::open(&segment_path)?;
@@ -88,8 +103,8 @@ fn run() -> Result<()> {
         println!("compile_ns: {compile_ns}");
         println!("open_ns: {open_ns}");
         println!("segment_bytes: {segment_bytes}");
-        let probes = build_probes(fixtures)?;
-        (segment, probes, Some(segment_path))
+        let (probes, targets) = build_probes(fixtures)?;
+        (segment, probes, targets, Some(segment_path))
     } else {
         let segment_path = args.segment.ok_or_else(|| {
             L5mError::Format("missing --segment unless --synthetic-capsules is set".to_string())
@@ -99,8 +114,8 @@ fn run() -> Result<()> {
         })?;
         let segment = Segment::open(segment_path)?;
         let fixtures: Vec<QueryFixture> = serde_json::from_str(&fs::read_to_string(queries_path)?)?;
-        let probes = build_probes(fixtures)?;
-        (segment, probes, None)
+        let (probes, targets) = build_probes(fixtures)?;
+        (segment, probes, targets, None)
     };
     if probes.is_empty() {
         return Err(L5mError::Format(
@@ -130,8 +145,14 @@ fn run() -> Result<()> {
     let mut candidate_total = 0usize;
     let mut returned_total = 0usize;
     let mut phase = RetrievalTimings::default();
+    let mut needle_total = 0u64;
+    let mut needle_hit_top1 = 0u64;
+    let mut needle_hit_returned = 0u64;
+    let mut embargoed_total = 0u64;
+    let mut embargoed_disclosed = 0u64;
     for iteration in 0..args.iterations {
-        let probe = &probes[iteration % probes.len()];
+        let index = iteration % probes.len();
+        let probe = &probes[index];
         let start = Instant::now();
         let (frame, timings) = retrieve_with_timings(&segment, probe, &config)?;
         latencies.push(start.elapsed().as_nanos() as u64);
@@ -141,6 +162,25 @@ fn run() -> Result<()> {
         phase.lookup_ns += timings.lookup_ns;
         phase.scoring_ns += timings.scoring_ns;
         phase.relation_ns += timings.relation_ns;
+        // Recall / disclosure against the ground-truth target (first pass over
+        // the query set only, so each query counts once).
+        if iteration < probes.len() {
+            if let (Some(target), embargoed) = targets[index] {
+                let returned = frame.capsules.iter().any(|c| c.capsule_id == target);
+                if embargoed {
+                    // The CORRECT behavior is to refuse: the target fails a
+                    // trust/temporal/policy gate for this probe.
+                    embargoed_total += 1;
+                    embargoed_disclosed += u64::from(returned);
+                } else {
+                    needle_total += 1;
+                    if frame.capsules.first().map(|c| c.capsule_id) == Some(target) {
+                        needle_hit_top1 += 1;
+                    }
+                    needle_hit_returned += u64::from(returned);
+                }
+            }
+        }
     }
     let iters = args.iterations as u64;
     latencies.sort_unstable();
@@ -161,11 +201,29 @@ fn run() -> Result<()> {
     println!("phase_lookup_ns_avg: {}", phase.lookup_ns / iters);
     println!("phase_scoring_ns_avg: {}", phase.scoring_ns / iters);
     println!("phase_relation_ns_avg: {}", phase.relation_ns / iters);
+    if needle_total > 0 {
+        println!("needle_queries: {needle_total}");
+        println!(
+            "needle_recall_at1: {:.4}",
+            needle_hit_top1 as f64 / needle_total as f64
+        );
+        println!(
+            "needle_recall_returned: {:.4}",
+            needle_hit_returned as f64 / needle_total as f64
+        );
+    }
+    if embargoed_total > 0 {
+        println!("embargoed_queries: {embargoed_total}");
+        println!("embargoed_disclosed: {embargoed_disclosed}");
+    }
     Ok(())
 }
 
-fn build_probes(fixtures: Vec<QueryFixture>) -> Result<Vec<MemoryProbe>> {
+type Target = (Option<u128>, bool); // (target id, embargoed)
+
+fn build_probes(fixtures: Vec<QueryFixture>) -> Result<(Vec<MemoryProbe>, Vec<Target>)> {
     let mut probes = Vec::with_capacity(fixtures.len());
+    let mut targets = Vec::with_capacity(fixtures.len());
     for fixture in fixtures {
         let mut probe = MemoryProbe::build(
             &fixture.query,
@@ -178,8 +236,9 @@ fn build_probes(fixtures: Vec<QueryFixture>) -> Result<Vec<MemoryProbe>> {
         probe.include_supporting = fixture.include_supporting;
         probe.include_contradictions = fixture.include_contradictions;
         probes.push(probe);
+        targets.push((fixture.target_capsule_id, fixture.target_embargoed));
     }
-    Ok(probes)
+    Ok((probes, targets))
 }
 
 /// A broad vocabulary so synthetic capsules get *diverse* fingerprints (real
@@ -254,6 +313,7 @@ fn generate_synthetic_segment(
     query_count: usize,
     needle: bool,
     tenants: u64,
+    export_corpus: Option<&std::path::Path>,
 ) -> Result<(PathBuf, Vec<QueryFixture>, u64)> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -397,8 +457,55 @@ fn generate_synthetic_segment(
             trust_floor: 4,
             include_supporting: index % 5 == 0,
             include_contradictions: index % 3 == 0,
+            target_capsule_id: if needle {
+                Some((target + 1) as u128)
+            } else {
+                None
+            },
+            // Mirror the generator's gate-relevant assignments: a target is
+            // embargoed for this probe when it fails trust (synthetic trust 2 <
+            // floor 4), validity (expired or future), or the probe's narrowed
+            // policy mask. Keep in sync with the capsule construction above.
+            target_embargoed: needle
+                && (target % 19 == 0 // trust_level 2 < floor 4
+                    || target % 31 == 0 // valid_until expired before as_of
+                    || target % 23 == 0 // valid_from in the future
+                    || (index % 7 == 0 && target % 17 == 0)), // policy 0x8 vs probe 0x1
         });
     }
+
+    // Export the identical workload for external peers (vector DBs etc.):
+    // same texts, same tenant assignment, same queries, same ground truth.
+    if let Some(path) = export_corpus {
+        let docs: Vec<serde_json::Value> = capsules
+            .iter()
+            .map(|c| {
+                json!({
+                    "capsule_id": c["capsule_id"],
+                    "tenant_id": c["tenant_id"],
+                    "text": format!("{} {}", c["claim"].as_str().unwrap_or(""),
+                                              c["evidence"].as_str().unwrap_or("")),
+                })
+            })
+            .collect();
+        let queries: Vec<serde_json::Value> = fixtures
+            .iter()
+            .map(|f| {
+                json!({
+                    "query": f.query,
+                    "tenant": f.tenant,
+                    "target_capsule_id": f.target_capsule_id.map(|t| t.to_string()),
+                    "target_embargoed": f.target_embargoed,
+                })
+            })
+            .collect();
+        fs::write(
+            path,
+            serde_json::to_string(&json!({"documents": docs, "queries": queries}))?,
+        )?;
+        println!("exported_corpus: {}", path.display());
+    }
+
     Ok((segment, fixtures, compile_ns))
 }
 
