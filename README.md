@@ -1,6 +1,11 @@
 # L5M: Low-Latency 5D Memory for AI
 
-**Authorization enforced *before* relevance — no query can surface a memory it isn't allowed to see.** Memory-safe Rust, a fuzzed untrusted-input parser, and a machine-checked security invariant.
+[![CI](https://github.com/jbrorepo/l5m/actions/workflows/ci.yml/badge.svg)](https://github.com/jbrorepo/l5m/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Rust](https://img.shields.io/badge/rust-1.87%2B-orange.svg)](Cargo.toml)
+[![unsafe: forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](#security)
+
+**Authorization enforced *before* relevance — no query can surface a memory it isn't allowed to see.** Memory-safe Rust, a fuzzed untrusted-input parser, and a machine-checked security invariant. **New to the code? Start with the [Reviewer's Guide](REVIEW.md).**
 
 L5M is a local, memory-mapped retrieval engine for LLM/agent memory. Its hard gates (tenant, context, policy, trust, temporal) run on the candidate set *before* any scoring, so authorization never depends on relevance. Hybrid lexical + dense retrieval that is **statistically more accurate than a production vector DB** (see below), with a query hot path in the low single-digit milliseconds and sub-millisecond multi-tenant retrieval at 1M capsules.
 

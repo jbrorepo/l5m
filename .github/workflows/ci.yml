@@ -38,6 +38,16 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  msrv:
+    name: build on declared MSRV (1.87)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.87.0
+      - uses: Swatinem/rust-cache@v2
+      # The rust-version in Cargo.toml is a promise; this proves it.
+      - run: cargo build --workspace
+
   python-sdk:
     name: python client (stdlib only)
     runs-on: ubuntu-latest
