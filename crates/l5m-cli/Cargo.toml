@@ -2,7 +2,13 @@
 name = "l5m-cli"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Command-line tool for L5M: compile memory capsules into segments and run gated queries."
+readme = "README.md"
+keywords = ["memory", "retrieval", "cli", "rag", "security"]
+categories = ["command-line-utilities", "database"]
 
 [[bin]]
 name = "l5m"
@@ -10,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-l5m-core = { path = "../l5m-core" }
+l5m-core = { path = "../l5m-core", version = "0.1.0" }
 serde_json.workspace = true
 
 [dev-dependencies]

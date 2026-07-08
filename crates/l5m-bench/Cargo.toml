@@ -3,6 +3,7 @@ name = "l5m-bench"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish = false # internal microbenchmark harness, not a shipped crate
 
 [dependencies]
 clap.workspace = true
